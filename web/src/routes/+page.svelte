@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { browser } from '$app/environment';
+	import Fuse from 'fuse.js';
 	import { Button } from '$lib/components/ui/button';
 	import HomeView from '$lib/components/HomeView.svelte';
 	import ResultsView from '$lib/components/ResultsView.svelte';
@@ -9,6 +10,24 @@
 	import { humanizeName } from '$lib/utils/humanize';
 	import type { Sprite, FilterState } from '$lib/types';
 	import manifest from '$lib/../../src/data/manifest.json';
+
+	// Build searchable sprite list with humanized names for Fuse.js
+	interface SearchableSprite extends Sprite {
+		displayName: string;
+	}
+
+	const searchableSprites: SearchableSprite[] = (manifest.sprites as Sprite[]).map((s) => ({
+		...s,
+		displayName: humanizeName(s.name)
+	}));
+
+	// Create Fuse instance for fuzzy search
+	const fuse = new Fuse(searchableSprites, {
+		keys: ['displayName'],
+		threshold: 0.3, // 0 = exact match, 1 = match anything
+		ignoreLocation: true, // Search anywhere in the string
+		includeScore: true
+	});
 
 	// Filter state
 	let filters = $state<FilterState>({
@@ -72,12 +91,14 @@
 
 	// Apply all filters except category (for computing per-category counts)
 	let spritesBeforeCategoryFilter = $derived.by(() => {
-		let result = manifest.sprites as Sprite[];
+		let result: Sprite[];
 
-		// Filter by search query (simple substring match)
+		// Filter by search query using Fuse.js fuzzy search
 		if (filters.query) {
-			const q = filters.query.toLowerCase();
-			result = result.filter((s) => s.name.toLowerCase().includes(q));
+			const fuseResults = fuse.search(filters.query);
+			result = fuseResults.map((r) => r.item as Sprite);
+		} else {
+			result = manifest.sprites as Sprite[];
 		}
 
 		// Filter by dimensions
