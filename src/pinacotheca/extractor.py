@@ -122,6 +122,11 @@ def extract_sprites(
                     img = data.image
                     if img:
                         cat = categorize(name)
+
+                        # Large uncategorized images are backgrounds
+                        if cat == "other" and img.width >= 1024:
+                            cat = "backgrounds"
+
                         out_path = sprites_dir / cat / f"{name}.png"
 
                         if not out_path.exists():

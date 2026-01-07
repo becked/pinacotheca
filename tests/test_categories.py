@@ -32,16 +32,13 @@ class TestCategorize:
             "GENERIC_TEEN_MALE",
             "GENERIC_ADULT_FEMALE",
             "GENERIC_SENIOR_01",
+            "HISTORICAL_PERSON_ALEXANDER",
+            "PORTRAIT_BACKGROUND_ROME",
         ],
     )
-    def test_portraits_generic(self, name: str) -> None:
-        assert categorize(name) == "portraits_generic"
-
-    def test_portraits_historical(self) -> None:
-        assert categorize("HISTORICAL_PERSON_ALEXANDER") == "portraits_historical"
-
-    def test_portraits_background(self) -> None:
-        assert categorize("PORTRAIT_BACKGROUND_ROME") == "portraits_background"
+    def test_portraits_all_types(self, name: str) -> None:
+        """All portrait types should be in the single 'portraits' category."""
+        assert categorize(name) == "portraits"
 
     # Unit tests
     @pytest.mark.parametrize(
@@ -175,8 +172,9 @@ class TestCategorize:
 
     # UI tests
     @pytest.mark.parametrize("name", ["UI_BUTTON", "HUD_MINIMAP", "ICON_GOLD", "PING_ALERT"])
-    def test_ui_hud(self, name: str) -> None:
-        assert categorize(name) == "ui_hud"
+    def test_ui_hud_in_events(self, name: str) -> None:
+        """HUD elements now go to events_images (displayed as 'UI')."""
+        assert categorize(name) == "events_images"
 
     @pytest.mark.parametrize("name", ["button_primary", "Button_Cancel", "ACTION_MOVE"])
     def test_ui_buttons(self, name: str) -> None:
@@ -189,12 +187,14 @@ class TestCategorize:
         assert categorize(name) == "ui_frames"
 
     @pytest.mark.parametrize("name", ["Arrow_Up", "Scroll_Bar", "Tab_Active", "Menu_Item"])
-    def test_ui_misc(self, name: str) -> None:
-        assert categorize(name) == "ui_misc"
+    def test_ui_elements_in_events(self, name: str) -> None:
+        """UI misc elements now go to events_images (displayed as 'UI')."""
+        assert categorize(name) == "events_images"
 
     # Other categories
     def test_character_select(self) -> None:
-        assert categorize("CHARACTER_SELECT_FRAME") == "character_select"
+        """CHARACTER_SELECT_FRAME ends with Frame, so goes to events_images (UI)."""
+        assert categorize("CHARACTER_SELECT_FRAME") == "events_images"
 
     def test_tools(self) -> None:
         assert categorize("TOOL_HAMMER") == "tools"
@@ -229,7 +229,7 @@ class TestCategoryDisplay:
 
     def test_known_category(self) -> None:
         name, icon = get_category_display("portraits")
-        assert name == "Character Portraits"
+        assert name == "Portraits"
         assert icon == "👤"
 
     def test_unknown_category(self) -> None:
@@ -258,7 +258,7 @@ class TestCategoryOrder:
     def test_portraits_before_other(self) -> None:
         """Portrait patterns should match before catch-all."""
         assert categorize("ROME_MALE_01") == "portraits"
-        assert categorize("GENERIC_ADULT_01") == "portraits_generic"
+        assert categorize("GENERIC_ADULT_01") == "portraits"
 
     def test_other_is_last(self) -> None:
         """The 'other' category should be the last pattern."""

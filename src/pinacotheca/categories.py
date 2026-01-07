@@ -11,10 +11,7 @@ from typing import Final
 # Category display information: (display_name, emoji_icon)
 CATEGORY_INFO: Final[dict[str, tuple[str, str]]] = {
     # Portraits
-    "portraits": ("Character Portraits", "👤"),
-    "portraits_generic": ("Generic Portraits", "👶"),
-    "portraits_historical": ("Historical Figures", "📜"),
-    "portraits_background": ("Portrait Backgrounds", "🖼️"),
+    "portraits": ("Portraits", "👤"),
     # Military
     "units": ("Military Units", "⚔️"),
     "unit_actions": ("Unit Actions", "🎬"),
@@ -29,7 +26,7 @@ CATEGORY_INFO: Final[dict[str, tuple[str, str]]] = {
     "yields": ("Yields", "📊"),
     "techs": ("Technologies", "🔬"),
     "laws": ("Laws", "📜"),
-    "traits": ("Character Traits", "🎭"),
+    "traits": ("Archetypes", "🎭"),
     "councils": ("Councils", "👥"),
     "specialists": ("Specialists", "🎓"),
     "missions": ("Missions", "🎯"),
@@ -37,40 +34,40 @@ CATEGORY_INFO: Final[dict[str, tuple[str, str]]] = {
     "terrains": ("Terrains", "🏔️"),
     "families": ("Families", "👨‍👩‍👧"),
     "nations": ("Nations", "🏴"),
-    "theology": ("Theology", "⛪"),
+    "theology": ("Theologies", "⛪"),
     "wonders": ("Wonders", "🏛️"),
     # Game state
     "bonuses": ("Bonuses", "⬆️"),
     "cooldowns": ("Cooldowns", "⏱️"),
     "achievements": ("Achievements", "🏆"),
-    "events_images": ("Event Images", "📰"),
+    "events_images": ("UI", "📰"),
     "diplomacy": ("Diplomacy", "🤝"),
     "city": ("City", "🏙️"),
     "military": ("Military Status", "🎖️"),
     "status": ("Status Icons", "📍"),
     "effects": ("Effects", "✨"),
     # UI
-    "ui_hud": ("HUD Elements", "🖥️"),
     "ui_buttons": ("Buttons", "🔘"),
     "ui_frames": ("Frames & Panels", "🪟"),
-    "ui_misc": ("UI Misc", "🔧"),
     # Other
     "character_select": ("Character Select", "👆"),
     "tools": ("Tools", "🔧"),
+    "backgrounds": ("Backgrounds", "🖼️"),
     "other": ("Other", "📁"),
 }
 
 # Regex patterns for categorization - ORDER MATTERS (first match wins)
 CATEGORIES: Final[dict[str, str]] = {
-    # Character portraits (by nation/culture + dev credits)
+    # All portraits (nation, generic, historical, backgrounds)
     "portraits": (
         r"^(AKSUM|ASSYRIA|BABYLONIA|CARTHAGE|CHINA|DANE|EGYPT|GAUL|GREECE|HITTITE|"
         r"HUN|HYKSOS|INDIA|KUSH|MAURYA|MITANNI|NUMIDIAN|PERSIA|ROME|SCYTHIAN|"
-        r"THRACIAN|VANDAL|YUEZHI|TAMIL)_(LEADER_)?(FEMALE|MALE)_|^CREDIT_"
+        r"THRACIAN|VANDAL|YUEZHI|TAMIL)_(LEADER_)?(FEMALE|MALE)_"
+        r"|^CREDIT_"
+        r"|^GENERIC_(BABY|BOY|GIRL|TEEN|ADULT|SENIOR)"
+        r"|^HISTORICAL_PERSON"
+        r"|^PORTRAIT_BACKGROUND"
     ),
-    "portraits_generic": r"^GENERIC_(BABY|BOY|GIRL|TEEN|ADULT|SENIOR)",
-    "portraits_historical": r"^HISTORICAL_PERSON",
-    "portraits_background": r"^PORTRAIT_BACKGROUND",
     # Military units (actual unit types, not actions/effects)
     "units": (
         r"^UNIT_(AFRICAN_ELEPHANT|AKKADIAN|AMAZON|AMUN|ARCHER|ARMOURED|ASSAULT|"
@@ -98,7 +95,7 @@ CATEGORIES: Final[dict[str, str]] = {
     "religions": r"^RELIGION_",
     "traits": r"^TRAIT_",
     "specialists": r"^SPECIALIST_",
-    "missions": r"^MISSION_",
+    "missions": r"^(MISSION_|FAMILY_MARRIAGE)",
     "projects": r"^PROJECT_",
     "terrains": r"^TERRAIN_",
     "families": r"^FAMILY_",
@@ -110,17 +107,15 @@ CATEGORIES: Final[dict[str, str]] = {
     "bonuses": r"^BONUS_",
     "cooldowns": r"^COOLDOWN_",
     "achievements": r"^ACHIEVEMENT",
-    "events_images": r"^EVENT_",
+    "events_images": r"^(EVENT_|Arrow|Scroll|Tab|Menu|Popup|Tooltip|Card|Gradient|Mask|Circle|Square|Bar_|BarIcon|UI_|HUD_|ICON_|PING_|TURN_SUMMARY)|^.*Frame$",
     "diplomacy": r"^(DIPLOMACY_|AI_DECLARE|BARB_)",
     "city": r"^CITY_",
     "military": r"^MILITARY_",
     "status": r"^STATUS_",
     "effects": r"^EFFECT_",
     # UI elements
-    "ui_hud": r"^(UI_|HUD_|ICON_|PING_|TURN_SUMMARY)",
     "ui_buttons": r"^(button|Button|BUTTON|ACTION)",
     "ui_frames": r"^(Frame|frame|Panel|panel|Window|window|Trim|trim|Border|border|Background|BG|Blur)",
-    "ui_misc": r"^(Arrow|Scroll|Tab|Menu|Popup|Tooltip|Card|Gradient|Mask|Circle|Square|Bar)",
     # Characters
     "character_select": r"^CHARACTER_SELECT",
     # Tools and misc game icons
@@ -129,6 +124,8 @@ CATEGORIES: Final[dict[str, str]] = {
         r"^(Colosseum|Colossus|Pantheon|Library|Acropolis|Heliopolis|Mausoleum|"
         r"Necropolis|Cothon|Circus|Hanging|Bazaar|Oracle)"
     ),
+    # Backgrounds (categorized by size in extractor, not regex)
+    "backgrounds": r"^$",  # Never matches - size-based categorization in extractor
     # Catch-all (should be minimal now)
     "other": r".*",
 }
