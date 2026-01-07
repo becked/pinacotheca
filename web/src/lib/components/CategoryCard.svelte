@@ -15,7 +15,7 @@
 	class="group flex flex-col items-center text-center transition-transform hover:-translate-y-1"
 	{onclick}
 >
-	<div style="margin-bottom: 0.75rem; aspect-ratio: 1; width: 100%; display: flex; align-items: center; justify-content: center; border-radius: 0.5rem; background-color: #3f3833; padding: 1.5rem;">
+	<div style="margin-bottom: 0.75rem; aspect-ratio: 1; width: 100%; display: flex; align-items: center; justify-content: center; border-radius: 0.5rem; background-color: var(--color-surface-elevated); padding: 1.5rem;">
 		{#if representativeSprite}
 			<img
 				src={representativeSprite.path}

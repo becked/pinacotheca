@@ -53,17 +53,17 @@
 </script>
 
 <!-- Header Section - Brown -->
-<header style="background-color: #241f1c;">
+<header style="background-color: var(--color-surface);">
 	<div style="max-width: 1024px; margin: 0 auto; padding: 1.5rem; display: flex; align-items: center; justify-content: center; gap: 1.5rem;">
 		<img src="/pinacotheca.jpg" alt="Pinacotheca" style="height: 4rem; width: auto;" />
-		<h1 style="font-size: 4rem; font-weight: bold; letter-spacing: -0.025em; color: #e8dcd4;">
+		<h1 style="font-size: 4rem; font-weight: bold; letter-spacing: -0.025em; color: var(--color-foreground);">
 			Pinacotheca
 		</h1>
 	</div>
 </header>
 
 <!-- Search Section - Brown -->
-<section style="background-color: #241f1c; margin-top: 16px; width: 90%; margin-left: auto; margin-right: auto;">
+<section style="background-color: var(--color-surface); margin-top: 16px; width: 90%; margin-left: auto; margin-right: auto;">
 	<div style="max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem;">
 		<input
 			type="text"
@@ -71,37 +71,37 @@
 			value={filters.query}
 			oninput={(e) => onSearch((e.target as HTMLInputElement).value)}
 			onkeydown={handleKeyDown}
-			style="width: 100%; padding: 1rem 1.5rem; font-size: 1.125rem; border: 2px solid #3d3330; border-radius: 0.5rem; background-color: #0a0a0a; color: #e8dcd4;"
+			style="width: 100%; padding: 1rem 1.5rem; font-size: 1.125rem; border: 2px solid var(--color-border); border-radius: 0.5rem; background-color: var(--color-background); color: var(--color-foreground);"
 		/>
 	</div>
 </section>
 
 <!-- Filter/Nav Section - Brown -->
-<section style="background-color: #241f1c; margin-top: 16px; width: 90%; margin-left: auto; margin-right: auto;">
+<section style="background-color: var(--color-surface); margin-top: 16px; width: 90%; margin-left: auto; margin-right: auto;">
 	<div style="max-width: 800px; margin: 0 auto; padding: 1rem 1.5rem; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
 		<button
 			onclick={onClearAll}
-			style="color: #c17f59; background: none; border: none; cursor: pointer; font-size: 0.875rem;"
+			style="color: var(--color-primary); background: none; border: none; cursor: pointer; font-size: 0.875rem;"
 		>
 			&larr; Back to Browse
 		</button>
-		<span style="color: #7a6f68;">|</span>
+		<span style="color: var(--color-muted);">|</span>
 		<select
 			value={filters.category ?? ''}
 			onchange={(e) => onCategoryChange((e.target as HTMLSelectElement).value || null)}
-			style="padding: 0.5rem 1rem; border: 1px solid #3d3330; border-radius: 0.375rem; background-color: #0a0a0a; color: #e8dcd4; font-size: 0.875rem;"
+			style="padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 0.375rem; background-color: var(--color-background); color: var(--color-foreground); font-size: 0.875rem;"
 		>
 			<option value="">All Categories</option>
 			{#each sortedCategories as [cat, data]}
 				<option value={cat}>{data.displayName} ({data.count})</option>
 			{/each}
 		</select>
-		<span style="color: #7a6f68; margin-left: auto; font-size: 0.875rem;">{resultSummary}</span>
+		<span style="color: var(--color-muted); margin-left: auto; font-size: 0.875rem;">{resultSummary}</span>
 	</div>
 </section>
 
 <!-- Results Section - Brown, 90% width -->
-<section style="background-color: #241f1c; margin-top: 16px; width: 90%; margin-left: auto; margin-right: auto;">
+<section style="background-color: var(--color-surface); margin-top: 16px; width: 90%; margin-left: auto; margin-right: auto;">
 	<div style="padding: 3rem;">
 		{#if sprites.length > 0}
 			<div class="results-grid">
@@ -110,7 +110,7 @@
 				{/each}
 			</div>
 		{:else}
-			<div style="text-align: center; padding: 4rem 0; color: #7a6f68;">
+			<div style="text-align: center; padding: 4rem 0; color: var(--color-muted);">
 				<p style="font-size: 1.125rem;">No sprites found</p>
 				<p style="margin-top: 0.5rem; font-size: 0.875rem;">Try adjusting your search or filters</p>
 			</div>
