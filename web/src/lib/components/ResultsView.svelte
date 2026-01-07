@@ -67,14 +67,26 @@
 <!-- Search Section - Brown -->
 <section style="background-color: var(--color-surface); margin-top: 16px; width: 90%; margin-left: auto; margin-right: auto;">
 	<div style="max-width: 800px; margin: 0 auto; padding: 2rem 1.5rem;">
-		<input
-			type="text"
-			placeholder="Search"
-			value={filters.query}
-			oninput={(e) => onSearch((e.target as HTMLInputElement).value)}
-			onkeydown={handleKeyDown}
-			style="width: 100%; padding: 1rem 1.5rem; font-size: 1.125rem; border: 2px solid var(--color-border); border-radius: 0.5rem; background-color: var(--color-background); color: var(--color-foreground);"
-		/>
+		<div style="position: relative;">
+			<input
+				type="text"
+				placeholder="Search"
+				value={filters.query}
+				oninput={(e) => onSearch((e.target as HTMLInputElement).value)}
+				onkeydown={handleKeyDown}
+				style="width: 100%; padding: 1rem 1.5rem; padding-right: 3rem; font-size: 1.125rem; border: 2px solid var(--color-border); border-radius: 0.5rem; background-color: var(--color-background); color: var(--color-foreground);"
+			/>
+			{#if filters.query}
+				<button
+					type="button"
+					onclick={() => onSearch('')}
+					aria-label="Clear search"
+					style="position: absolute; right: 0.75rem; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; padding: 0.5rem; color: var(--color-muted); font-size: 1.25rem; line-height: 1;"
+				>
+					&times;
+				</button>
+			{/if}
+		</div>
 	</div>
 </section>
 
