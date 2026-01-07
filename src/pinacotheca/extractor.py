@@ -6,12 +6,44 @@ Uses UnityPy to extract sprites directly from Old World's game files.
 
 import gc
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pinacotheca.categories import CATEGORIES, categorize
+
+# Exclusion patterns file (gitignored, contains patterns to skip)
+EXCLUDE_PATTERNS_FILE = Path(__file__).parent.parent.parent / ".exclude-patterns"
+
+
+def load_exclusion_pattern() -> re.Pattern[str] | None:
+    """
+    Load exclusion patterns from .exclude-patterns file if it exists.
+
+    The file should contain regex patterns (one per line, or pipe-separated).
+    Lines starting with # are comments. Empty lines are ignored.
+
+    Returns:
+        Compiled regex pattern, or None if no exclusions
+    """
+    if not EXCLUDE_PATTERNS_FILE.exists():
+        return None
+
+    patterns: list[str] = []
+    for line in EXCLUDE_PATTERNS_FILE.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            # Support both one-per-line and pipe-separated
+            patterns.extend(p.strip() for p in line.split("|") if p.strip())
+
+    if not patterns:
+        return None
+
+    # Combine into single pattern with word boundaries for safety
+    combined = "|".join(patterns)
+    return re.compile(combined, re.IGNORECASE)
 
 if TYPE_CHECKING:
     from UnityPy import Environment
@@ -106,7 +138,13 @@ def extract_sprites(
     os.chdir(str(game_data))
 
     try:
+        # Load exclusion patterns (from gitignored .exclude-patterns file)
+        exclude_pattern = load_exclusion_pattern()
+        excluded_count = 0
+
         if verbose:
+            if exclude_pattern:
+                print(f"\nExclusion patterns loaded from .exclude-patterns")
             print("\nLoading asset index...")
 
         env: Environment = UnityPy.Environment()
@@ -129,6 +167,12 @@ def extract_sprites(
                 name = getattr(data, "m_Name", "")
 
                 if name:
+                    # Skip excluded patterns
+                    if exclude_pattern and exclude_pattern.search(name):
+                        excluded_count += 1
+                        del data
+                        continue
+
                     img = data.image
                     if img:
                         cat = categorize(name)
@@ -163,6 +207,8 @@ def extract_sprites(
             print("EXTRACTION COMPLETE")
             print("=" * 60)
             print(f"Total sprites extracted: {total_extracted:,}")
+            if excluded_count > 0:
+                print(f"Excluded by pattern: {excluded_count:,}")
             print(f"Errors: {errors:,}")
             print("\nBy category:")
             for cat, count in sorted(counts.items(), key=lambda x: -x[1]):
@@ -325,12 +371,18 @@ def extract_unit_meshes(
         print("3D Unit Mesh Extraction")
         print("=" * 60)
 
+    # Load exclusion patterns
+    exclude_pattern = load_exclusion_pattern()
+    excluded_count = 0
+
     # Change to game data directory for UnityPy
     original_cwd = os.getcwd()
     os.chdir(str(game_data))
 
     try:
         if verbose:
+            if exclude_pattern:
+                print("Exclusion patterns loaded from .exclude-patterns")
             print("Loading assets...")
 
         env = UnityPy.Environment()
@@ -365,6 +417,13 @@ def extract_unit_meshes(
         skipped = 0
 
         for mesh_name, output_name in UNIT_MESHES:
+            # Skip excluded patterns
+            if exclude_pattern and exclude_pattern.search(output_name):
+                excluded_count += 1
+                if verbose:
+                    print(f"  [EXCLUDED] {output_name}")
+                continue
+
             out_path = sprites_dir / f"UNIT_3D_{output_name}.png"
 
             # Skip if already exists
@@ -434,10 +493,12 @@ def extract_unit_meshes(
             print("3D EXTRACTION COMPLETE")
             print("=" * 60)
             print(f"Rendered: {rendered}")
+            if excluded_count > 0:
+                print(f"Excluded by pattern: {excluded_count}")
             print(f"Skipped: {skipped}")
             print(f"Output: {sprites_dir}")
 
-        return {"rendered": rendered, "skipped": skipped}
+        return {"rendered": rendered, "skipped": skipped, "excluded": excluded_count}
 
     finally:
         os.chdir(original_cwd)

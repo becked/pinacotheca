@@ -56,6 +56,9 @@ output/
 .DS_Store
 Thumbs.db
 
+# Local exclusion patterns (not committed to avoid spoilers)
+.exclude-patterns
+
 # Reference symlink (points to game files)
 reference
 
