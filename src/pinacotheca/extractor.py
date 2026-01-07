@@ -6,6 +6,7 @@ Uses UnityPy to extract sprites directly from Old World's game files.
 
 import gc
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -90,6 +91,15 @@ def extract_sprites(
     sprites_dir = output_dir / "sprites"
     for cat in CATEGORIES:
         (sprites_dir / cat).mkdir(parents=True, exist_ok=True)
+
+    # Clean up stale category folders (from previous extractions with different categories)
+    if sprites_dir.exists():
+        valid_categories = set(CATEGORIES.keys())
+        for item in sprites_dir.iterdir():
+            if item.is_dir() and item.name not in valid_categories:
+                if verbose:
+                    print(f"Removing stale category folder: {item.name}/")
+                shutil.rmtree(item)
 
     # CRITICAL: Change to Data directory so UnityPy can find .resS files
     original_cwd = os.getcwd()

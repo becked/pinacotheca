@@ -43,12 +43,8 @@ CATEGORY_INFO: Final[dict[str, tuple[str, str]]] = {
     "events_images": ("UI", "📰"),
     "diplomacy": ("Diplomacy", "🤝"),
     "city": ("City", "🏙️"),
-    "military": ("Military Status", "🎖️"),
     "status": ("Status Icons", "📍"),
     "effects": ("Effects", "✨"),
-    # UI
-    "ui_buttons": ("Buttons", "🔘"),
-    "ui_frames": ("Frames & Panels", "🪟"),
     # Other
     "character_select": ("Character Select", "👆"),
     "tools": ("Tools", "🔧"),
@@ -58,7 +54,7 @@ CATEGORY_INFO: Final[dict[str, tuple[str, str]]] = {
 
 # Regex patterns for categorization - ORDER MATTERS (first match wins)
 CATEGORIES: Final[dict[str, str]] = {
-    # All portraits (nation, generic, historical, backgrounds)
+    # All portraits (nation, generic, historical)
     "portraits": (
         r"^(AKSUM|ASSYRIA|BABYLONIA|CARTHAGE|CHINA|DANE|EGYPT|GAUL|GREECE|HITTITE|"
         r"HUN|HYKSOS|INDIA|KUSH|MAURYA|MITANNI|NUMIDIAN|PERSIA|ROME|SCYTHIAN|"
@@ -66,7 +62,6 @@ CATEGORIES: Final[dict[str, str]] = {
         r"|^CREDIT_"
         r"|^GENERIC_(BABY|BOY|GIRL|TEEN|ADULT|SENIOR)"
         r"|^HISTORICAL_PERSON"
-        r"|^PORTRAIT_BACKGROUND"
     ),
     # Military units (actual unit types, not actions/effects)
     "units": (
@@ -84,7 +79,9 @@ CATEGORIES: Final[dict[str, str]] = {
         r"^UNIT_(ACTION_|ATTACKED|CAPTURED|COOLDOWN|DAMAGED|DEAD|FLANKED|ROUT|KILLED|PUSH)"
     ),
     "unit_traits": r"^UNITTRAIT_",
-    "unit_effects": r"^EFFECTUNIT_",
+    # Backgrounds (specific patterns - MUST come before MILITARY_ in unit_effects)
+    "backgrounds": r"^(PORTRAIT_BACKGROUND|MILITARY_DEFEAT)",
+    "unit_effects": r"^(EFFECTUNIT_|MILITARY_)",
     # Game concepts
     "crests": r"^CREST_",
     "improvements": r"^IMPROVEMENT_",
@@ -107,15 +104,16 @@ CATEGORIES: Final[dict[str, str]] = {
     "bonuses": r"^BONUS_",
     "cooldowns": r"^COOLDOWN_",
     "achievements": r"^ACHIEVEMENT",
-    "events_images": r"^(EVENT_|Arrow|Scroll|Tab|Menu|Popup|Tooltip|Card|Gradient|Mask|Circle|Square|Bar_|BarIcon|UI_|HUD_|ICON_|PING_|TURN_SUMMARY)|^.*Frame$",
+    "events_images": (
+        r"^(EVENT_|Arrow|Scroll|Tab|Menu|Popup|Tooltip|Card|Gradient|Mask|Circle|Square|Bar_|BarIcon|UI_|HUD_|ICON_|PING_|TURN_SUMMARY)"
+        r"|^.*Frame$"
+        r"|^(button|Button|BUTTON|ACTION)"
+        r"|^(Frame|frame|Panel|panel|Window|window|Trim|trim|Border|border|Background|BG|Blur)"
+    ),
     "diplomacy": r"^(DIPLOMACY_|AI_DECLARE|BARB_)",
     "city": r"^CITY_",
-    "military": r"^MILITARY_",
     "status": r"^STATUS_",
     "effects": r"^EFFECT_",
-    # UI elements
-    "ui_buttons": r"^(button|Button|BUTTON|ACTION)",
-    "ui_frames": r"^(Frame|frame|Panel|panel|Window|window|Trim|trim|Border|border|Background|BG|Blur)",
     # Characters
     "character_select": r"^CHARACTER_SELECT",
     # Tools and misc game icons
@@ -124,8 +122,6 @@ CATEGORIES: Final[dict[str, str]] = {
         r"^(Colosseum|Colossus|Pantheon|Library|Acropolis|Heliopolis|Mausoleum|"
         r"Necropolis|Cothon|Circus|Hanging|Bazaar|Oracle)"
     ),
-    # Backgrounds (categorized by size in extractor, not regex)
-    "backgrounds": r"^$",  # Never matches - size-based categorization in extractor
     # Catch-all (should be minimal now)
     "other": r".*",
 }

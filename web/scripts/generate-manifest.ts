@@ -14,7 +14,7 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const SPRITES_DIR = join(__dirname, '../../extracted/sprites');
 const OUTPUT_FILE = join(__dirname, '../src/data/manifest.json');
 
-// Mirror of Python CATEGORY_INFO
+// Mirror of Python CATEGORY_INFO - keep in sync with src/pinacotheca/categories.py
 const CATEGORY_INFO: Record<string, { displayName: string; icon: string }> = {
 	portraits: { displayName: 'Portraits', icon: '👤' },
 	units: { displayName: 'Military Units', icon: '⚔️' },
@@ -45,13 +45,8 @@ const CATEGORY_INFO: Record<string, { displayName: string; icon: string }> = {
 	events_images: { displayName: 'UI', icon: '📰' },
 	diplomacy: { displayName: 'Diplomacy', icon: '🤝' },
 	city: { displayName: 'City', icon: '🏙️' },
-	military: { displayName: 'Military Status', icon: '🎖️' },
 	status: { displayName: 'Status Icons', icon: '📍' },
 	effects: { displayName: 'Effects', icon: '✨' },
-	ui_buttons: { displayName: 'Buttons', icon: '🔘' },
-	ui_frames: { displayName: 'Frames & Panels', icon: '🪟' },
-	ui_hud: { displayName: 'HUD Elements', icon: '🖥️' },
-	ui_misc: { displayName: 'UI Misc', icon: '🎨' },
 	character_select: { displayName: 'Character Select', icon: '👆' },
 	tools: { displayName: 'Tools', icon: '🔧' },
 	backgrounds: { displayName: 'Backgrounds', icon: '🖼️' },

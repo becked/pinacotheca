@@ -33,12 +33,15 @@ class TestCategorize:
             "GENERIC_ADULT_FEMALE",
             "GENERIC_SENIOR_01",
             "HISTORICAL_PERSON_ALEXANDER",
-            "PORTRAIT_BACKGROUND_ROME",
         ],
     )
     def test_portraits_all_types(self, name: str) -> None:
         """All portrait types should be in the single 'portraits' category."""
         assert categorize(name) == "portraits"
+
+    def test_portrait_backgrounds_go_to_backgrounds(self) -> None:
+        """Portrait backgrounds should be in 'backgrounds' category."""
+        assert categorize("PORTRAIT_BACKGROUND_ROME") == "backgrounds"
 
     # Unit tests
     @pytest.mark.parametrize(
@@ -161,8 +164,13 @@ class TestCategorize:
     def test_city(self) -> None:
         assert categorize("CITY_GROWTH") == "city"
 
-    def test_military(self) -> None:
-        assert categorize("MILITARY_STRENGTH") == "military"
+    def test_military_goes_to_unit_effects(self) -> None:
+        """Military status sprites now go to unit_effects category."""
+        assert categorize("MILITARY_STRENGTH") == "unit_effects"
+
+    def test_military_defeat_goes_to_backgrounds(self) -> None:
+        """MILITARY_DEFEAT specifically goes to backgrounds."""
+        assert categorize("MILITARY_DEFEAT") == "backgrounds"
 
     def test_status(self) -> None:
         assert categorize("STATUS_WOUNDED") == "status"
@@ -177,14 +185,16 @@ class TestCategorize:
         assert categorize(name) == "events_images"
 
     @pytest.mark.parametrize("name", ["button_primary", "Button_Cancel", "ACTION_MOVE"])
-    def test_ui_buttons(self, name: str) -> None:
-        assert categorize(name) == "ui_buttons"
+    def test_ui_buttons_in_events(self, name: str) -> None:
+        """Button elements now go to events_images (displayed as 'UI')."""
+        assert categorize(name) == "events_images"
 
     @pytest.mark.parametrize(
         "name", ["Frame_Gold", "Panel_Info", "Window_Main", "Border_Fancy", "Background_Dark"]
     )
-    def test_ui_frames(self, name: str) -> None:
-        assert categorize(name) == "ui_frames"
+    def test_ui_frames_in_events(self, name: str) -> None:
+        """Frame/panel elements now go to events_images (displayed as 'UI')."""
+        assert categorize(name) == "events_images"
 
     @pytest.mark.parametrize("name", ["Arrow_Up", "Scroll_Bar", "Tab_Active", "Menu_Item"])
     def test_ui_elements_in_events(self, name: str) -> None:

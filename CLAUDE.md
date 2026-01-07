@@ -125,12 +125,29 @@ pytest -v
 
 ## Category Regex Patterns
 
-When adding new categories or refining existing ones, edit the `CATEGORIES` dict in `src/pinacotheca/categories.py`. Remember:
+When adding new categories or refining existing ones:
+
+### Files to Update
+1. **`src/pinacotheca/categories.py`** - Edit `CATEGORIES` dict (regex patterns) and `CATEGORY_INFO` dict (display names/icons)
+2. **`web/scripts/generate-manifest.ts`** - Update `CATEGORY_INFO` to match Python version
+3. **`tests/test_categories.py`** - Add/update tests for new patterns
+
+### Pattern Rules
 - Order matters: first matching pattern wins
 - Use raw strings (r'...') for regex patterns
 - The 'other' category is the catch-all at the end
-- Add corresponding display info to `CATEGORY_INFO`
-- Add tests in `tests/test_categories.py`
+- More specific patterns must precede general ones
+
+### After Changing Categories
+```bash
+# 1. Run extraction (automatically removes stale category folders)
+pinacotheca
+
+# 2. Rebuild gallery
+cd web && npm run build
+```
+
+The extractor automatically cleans up sprite folders that no longer match valid category names, then re-extracts those sprites to their correct new categories.
 
 ## GitHub Pages Deployment
 

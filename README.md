@@ -16,13 +16,14 @@ A Python tool for extracting and cataloging sprite assets from **Old World** (th
 
 - Pure Python extraction from Unity asset bundles
 - Automatic categorization of 4000+ sprites into 40+ categories
-- Interactive HTML gallery with search and lightbox viewing
+- SvelteKit gallery with fuzzy search, filters, and lightbox viewing
 - Cross-platform support (macOS and Windows)
 - Memory-efficient processing for large asset files
 
 ## Requirements
 
 - Python 3.11+
+- Node.js 18+ (for building the web gallery)
 - **Old World** installed via Steam (required for game assets)
 
 ## Installation
@@ -55,17 +56,21 @@ pinacotheca -o ~/my-sprites
 pinacotheca --game-data "/path/to/Old World/OldWorld_Data"
 ```
 
-### Regenerate Gallery
+### Build the Gallery
 
-If you've already extracted sprites and just want to rebuild the HTML gallery:
+After extracting sprites, build the SvelteKit gallery:
 
 ```bash
-pinacotheca-gallery
+cd web
+npm install   # First time only
+npm run build
 ```
+
+This outputs the gallery to `extracted/` alongside the sprites.
 
 ### Deploy to GitHub Pages
 
-After extraction, deploy the gallery to GitHub Pages:
+After building, deploy the gallery to GitHub Pages:
 
 ```bash
 # Deploy to gh-pages branch
@@ -105,12 +110,19 @@ pinacotheca/
 │   ├── __init__.py       # Package exports
 │   ├── categories.py     # Sprite categorization (regex patterns)
 │   ├── extractor.py      # UnityPy extraction logic
-│   ├── gallery.py        # HTML gallery generator
+│   ├── gallery.py        # Legacy HTML gallery generator
 │   └── cli.py            # Command-line interface
+├── web/                  # SvelteKit gallery (primary web interface)
+│   ├── scripts/
+│   │   └── generate-manifest.ts
+│   ├── src/
+│   │   ├── lib/          # Components, utils, types
+│   │   └── routes/       # SvelteKit pages
+│   └── svelte.config.js
 ├── tests/
 │   └── test_categories.py
 ├── extracted/            # Output directory (git-ignored)
-│   ├── index.html        # Interactive gallery
+│   ├── index.html        # Gallery (built from web/)
 │   └── sprites/          # Categorized sprite images
 └── pyproject.toml        # Project configuration
 ```
