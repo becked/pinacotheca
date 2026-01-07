@@ -70,14 +70,9 @@
 		goto(newUrl, { replaceState: replace, noScroll: true, keepFocus: true });
 	}
 
-	// Filter sprites based on current filters
-	let filteredSprites = $derived.by(() => {
+	// Apply all filters except category (for computing per-category counts)
+	let spritesBeforeCategoryFilter = $derived.by(() => {
 		let result = manifest.sprites as Sprite[];
-
-		// Filter by category
-		if (filters.category) {
-			result = result.filter((s) => s.category === filters.category);
-		}
 
 		// Filter by search query (simple substring match)
 		if (filters.query) {
@@ -110,6 +105,36 @@
 			});
 		}
 
+		return result;
+	});
+
+	// Filter sprites based on current filters (including category)
+	let filteredSprites = $derived.by(() => {
+		let result = spritesBeforeCategoryFilter;
+
+		// Filter by category
+		if (filters.category) {
+			result = result.filter((s) => s.category === filters.category);
+		}
+
+		return result;
+	});
+
+	// Compute category counts from filtered sprites (before category filter)
+	let filteredCategories = $derived.by(() => {
+		const counts: Record<string, number> = {};
+		for (const sprite of spritesBeforeCategoryFilter) {
+			counts[sprite.category] = (counts[sprite.category] || 0) + 1;
+		}
+
+		// Build new categories object with filtered counts
+		const result: Record<string, import('$lib/types').CategoryData> = {};
+		for (const [cat, data] of Object.entries(manifest.categories)) {
+			result[cat] = {
+				...data,
+				count: counts[cat] || 0
+			};
+		}
 		return result;
 	});
 
@@ -206,7 +231,7 @@
 	{#if isResultsView}
 		<ResultsView
 			sprites={filteredSprites}
-			categories={manifest.categories}
+			categories={filteredCategories}
 			{filters}
 			onSearch={handleSearch}
 			onCategoryChange={handleCategorySelect}
