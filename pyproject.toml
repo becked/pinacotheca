@@ -25,6 +25,8 @@ classifiers = [
 dependencies = [
     "UnityPy>=1.10.0",
     "Pillow>=10.0.0",
+    "moderngl>=5.8.0",
+    "numpy>=1.24.0",
 ]
 
 [project.optional-dependencies]
@@ -103,7 +105,7 @@ follow_imports = "silent"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = ["UnityPy.*", "PIL.*"]
+module = ["UnityPy.*", "PIL.*", "moderngl.*"]
 ignore_missing_imports = true
 
 # === Pytest ===

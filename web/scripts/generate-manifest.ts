@@ -17,7 +17,7 @@ const OUTPUT_FILE = join(__dirname, '../src/data/manifest.json');
 // Mirror of Python CATEGORY_INFO - keep in sync with src/pinacotheca/categories.py
 const CATEGORY_INFO: Record<string, { displayName: string; icon: string }> = {
 	portraits: { displayName: 'Portraits', icon: '👤' },
-	units: { displayName: 'Military Units', icon: '⚔️' },
+	units: { displayName: 'Units', icon: '⚔️' },
 	unit_actions: { displayName: 'Unit Actions', icon: '🎬' },
 	unit_traits: { displayName: 'Unit Traits', icon: '🏅' },
 	unit_effects: { displayName: 'Unit Effects', icon: '💫' },

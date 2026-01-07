@@ -9,7 +9,7 @@ export const CATEGORY_INFO: Record<string, CategoryInfo> = {
 	// Portraits
 	portraits: { displayName: 'Portraits', icon: '👤' },
 	// Military
-	units: { displayName: 'Military Units', icon: '⚔️' },
+	units: { displayName: 'Units', icon: '⚔️' },
 	unit_actions: { displayName: 'Unit Actions', icon: '🎬' },
 	unit_traits: { displayName: 'Unit Traits', icon: '🏅' },
 	unit_effects: { displayName: 'Unit Effects', icon: '💫' },
