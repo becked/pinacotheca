@@ -6,6 +6,7 @@
 	import HomeView from '$lib/components/HomeView.svelte';
 	import ResultsView from '$lib/components/ResultsView.svelte';
 	import { getCategoryInfo } from '$lib/utils/categories';
+	import { humanizeName } from '$lib/utils/humanize';
 	import type { Sprite, FilterState } from '$lib/types';
 	import manifest from '$lib/../../src/data/manifest.json';
 
@@ -254,7 +255,8 @@
 				class="sprite-image max-h-[70vh] max-w-[90vw] object-contain"
 			/>
 			<div class="mt-6 text-center">
-				<p class="text-xl text-foreground">{lightboxSprite.name}</p>
+				<p class="text-xl text-foreground">{humanizeName(lightboxSprite.name)}</p>
+				<p class="mt-1 text-xs text-muted/70 font-mono">{lightboxSprite.name}</p>
 				<p class="mt-1 text-sm text-muted">
 					{categoryInfo.icon}
 					{categoryInfo.displayName}

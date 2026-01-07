@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Sprite } from '$lib/types';
 	import { getCategoryInfo } from '$lib/utils/categories';
+	import { humanizeName } from '$lib/utils/humanize';
 
 	interface Props {
 		sprite: Sprite;
@@ -9,13 +10,7 @@
 
 	let { sprite, onclick }: Props = $props();
 
-	let displayName = $derived(() => {
-		const name = sprite.name;
-		const parts = name.split('_');
-		if (parts.length <= 3) return name;
-		const lastParts = parts.slice(-3).join('_');
-		return lastParts.length < name.length ? lastParts : name;
-	});
+	let displayName = $derived(humanizeName(sprite.name));
 
 	let categoryInfo = $derived(getCategoryInfo(sprite.category));
 
@@ -40,7 +35,7 @@
 		/>
 	</div>
 	<span class="font-medium text-foreground group-hover:text-primary" title={sprite.name}>
-		{displayName()}
+		{displayName}
 	</span>
 	<span class="text-sm text-muted">
 		{sprite.width} x {sprite.height}
