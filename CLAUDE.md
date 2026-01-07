@@ -19,7 +19,7 @@ pip install -e ".[dev]"
 # Extract sprites from Old World game assets
 pinacotheca
 
-# Regenerate the HTML gallery from already-extracted sprites
+# Regenerate the HTML gallery from already-extracted sprites (legacy)
 pinacotheca-gallery
 
 # Deploy gallery to GitHub Pages (gh-pages branch)
@@ -36,6 +36,25 @@ ruff format .
 mypy src/
 ```
 
+### Web Gallery (SvelteKit)
+
+```bash
+# Install web dependencies
+cd web && npm install
+
+# Run dev server (for development)
+npm run dev
+
+# Build production gallery (outputs to ../extracted/)
+npm run build
+
+# Generate manifest only (from extracted sprites)
+npm run manifest
+
+# Type check
+npm run check
+```
+
 ## Architecture
 
 ### Package Structure
@@ -45,9 +64,23 @@ src/pinacotheca/
 ├── __init__.py       # Package exports
 ├── categories.py     # Sprite categorization (regex patterns, pre-compiled)
 ├── extractor.py      # UnityPy extraction logic
-├── gallery.py        # HTML gallery generator
+├── gallery.py        # HTML gallery generator (legacy)
 ├── cli.py            # Command-line interface entry points
 └── py.typed          # PEP 561 marker for type hints
+
+web/                  # SvelteKit gallery (primary web interface)
+├── scripts/
+│   └── generate-manifest.ts  # Build-time sprite scanner
+├── src/
+│   ├── lib/
+│   │   ├── components/       # Svelte components (Sidebar, SpriteGrid, etc.)
+│   │   ├── utils/            # Categories, search (Fuse.js), URL state
+│   │   └── types.ts          # TypeScript interfaces
+│   ├── routes/
+│   │   └── +page.svelte      # Main gallery page
+│   └── data/
+│       └── manifest.json     # Generated sprite metadata
+└── svelte.config.js          # Outputs to ../extracted/
 ```
 
 ### Key Modules
@@ -72,8 +105,9 @@ src/pinacotheca/
 
 ```
 extracted/
-├── index.html        # Interactive HTML browser (for GitHub Pages)
-├── gallery.html      # Same content (legacy compatibility)
+├── index.html        # SvelteKit gallery (primary)
+├── _app/             # SvelteKit assets (JS, CSS)
+├── robots.txt        # Search engine config
 └── sprites/
     ├── portraits/    # Character portraits by nation
     ├── units/        # Military unit icons
@@ -103,7 +137,18 @@ When adding new categories or refining existing ones, edit the `CATEGORIES` dict
 The gallery is deployed to the `gh-pages` branch using `ghp-import`. The workflow:
 
 1. Run `pinacotheca` to extract sprites locally (requires game installed)
-2. Run `pinacotheca-deploy` to push to `gh-pages` branch
-3. GitHub Pages serves from `gh-pages` branch
+2. Run `cd web && npm run build` to build the SvelteKit gallery
+3. Run `pinacotheca-deploy` to push to `gh-pages` branch
+4. GitHub Pages serves from `gh-pages` branch
 
 Note: Only sprites (~500MB) are deployed, not textures (~2GB).
+
+## Web Gallery Features
+
+The SvelteKit gallery (`web/`) provides:
+- **Fuzzy search** with autocomplete dropdown (Fuse.js)
+- **Category navigation** with sprite counts
+- **Dimension filters** (min/max width/height, aspect ratio)
+- **Lightbox** with download button and keyboard navigation
+- **Shareable URLs** (`?q=archer&cat=units&minW=64`)
+- **Greek pottery color scheme** (terracotta on black)

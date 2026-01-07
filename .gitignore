@@ -58,3 +58,8 @@ Thumbs.db
 
 # Reference symlink (points to game files)
 reference
+
+# Web (SvelteKit gallery)
+web/node_modules/
+web/.svelte-kit/
+web/src/data/manifest.json
