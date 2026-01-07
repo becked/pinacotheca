@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff mypy
+          pip install ruff mypy moderngl numpy
 
       - name: Run Ruff linter
         run: ruff check .
@@ -30,7 +30,7 @@ jobs:
         run: ruff format --check .
 
       - name: Run mypy
-        run: mypy src/ --ignore-missing-imports
+        run: mypy src/
 
   test:
     name: Test (Python ${{ matrix.python-version }})

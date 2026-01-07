@@ -14,7 +14,11 @@ if TYPE_CHECKING:
     from PIL import Image
 
 
-def parse_obj(obj_data: str) -> tuple[list[list[float]], list[list[float]], list[list[float]], list[list[tuple[int, int, int]]]]:
+def parse_obj(
+    obj_data: str,
+) -> tuple[
+    list[list[float]], list[list[float]], list[list[float]], list[list[tuple[int, int, int]]]
+]:
     """
     Parse OBJ file content into vertices, UVs, normals, and faces.
 
@@ -83,7 +87,9 @@ def build_vertex_buffer(
     return np.array(vertex_data, dtype="f4")
 
 
-def compute_mesh_bounds(vertices: list[list[float]]) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+def compute_mesh_bounds(
+    vertices: list[list[float]],
+) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
     """
     Compute bounding box and center of mesh.
 
@@ -115,7 +121,9 @@ def perspective_matrix(fov: float, aspect: float, near: float, far: float) -> ND
     )
 
 
-def look_at_matrix(eye: NDArray[np.float64], target: NDArray[np.float64], up: NDArray[np.float64]) -> NDArray[np.float32]:
+def look_at_matrix(
+    eye: NDArray[np.float64], target: NDArray[np.float64], up: NDArray[np.float64]
+) -> NDArray[np.float32]:
     """Create view matrix looking from eye to target."""
     f = target - eye
     f = f / np.linalg.norm(f)
@@ -170,7 +178,9 @@ void main() {
 """
 
 
-def autocrop_with_padding(img: "Image.Image", padding: int = 32, min_size: int = 256) -> "Image.Image":
+def autocrop_with_padding(
+    img: "Image.Image", padding: int = 32, min_size: int = 256
+) -> "Image.Image":
     """
     Crop image to non-transparent content with padding.
 
@@ -304,7 +314,9 @@ def render_mesh_to_image(
 
         # Read pixels and create image
         data = fbo.color_attachments[0].read()  # type: ignore[union-attr]
-        img = Image.frombytes("RGBA", (width, height), data).transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        img = Image.frombytes("RGBA", (width, height), data).transpose(
+            Image.Transpose.FLIP_TOP_BOTTOM
+        )
 
         # Auto-crop to content
         if autocrop:
