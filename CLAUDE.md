@@ -13,31 +13,58 @@ Pinacotheca is a Python tool for extracting and cataloging sprite assets from th
 python3 -m venv venv
 source venv/bin/activate
 
-# Install dependencies
-pip install UnityPy Pillow
+# Install package with dev dependencies
+pip install -e ".[dev]"
 
 # Extract sprites from Old World game assets
-python extract_oldworld.py
+pinacotheca
 
 # Regenerate the HTML gallery from already-extracted sprites
-python generate_gallery.py
+pinacotheca-gallery
+
+# Deploy gallery to GitHub Pages (gh-pages branch)
+pinacotheca-deploy
+
+# Run tests
+pytest
+
+# Run linter and formatter
+ruff check .
+ruff format .
+
+# Run type checker
+mypy src/
 ```
 
 ## Architecture
 
-### Main Scripts
+### Package Structure
 
-- **`extract_oldworld.py`**: Primary extraction script. Loads Unity assets from the game's Data directory, extracts all Sprite objects, categorizes them by name pattern (portraits, units, crests, etc.), and generates an HTML gallery.
+```
+src/pinacotheca/
+├── __init__.py       # Package exports
+├── categories.py     # Sprite categorization (regex patterns, pre-compiled)
+├── extractor.py      # UnityPy extraction logic
+├── gallery.py        # HTML gallery generator
+├── cli.py            # Command-line interface entry points
+└── py.typed          # PEP 561 marker for type hints
+```
 
-- **`generate_gallery.py`**: Standalone gallery generator. Rebuilds `extracted/gallery.html` from existing sprites in `extracted/sprites/`.
+### Key Modules
 
-- **`extract_assets.py`**: Earlier proof-of-concept that also extracts Texture2D assets. Less refined categorization.
+- **`categories.py`**: Defines `CATEGORIES` dict mapping category names to regex patterns. Patterns are pre-compiled for performance. The `categorize()` function returns the category for a sprite name.
+
+- **`extractor.py`**: Contains `extract_sprites()` which loads Unity assets, extracts Sprite objects, and saves them by category. Auto-detects game installation path on macOS and Windows.
+
+- **`gallery.py`**: Contains `generate_gallery()` which builds an interactive HTML gallery with search and lightbox viewing.
+
+- **`cli.py`**: Entry points for the three CLI commands: `pinacotheca`, `pinacotheca-gallery`, `pinacotheca-deploy`.
 
 ### Key Design Patterns
 
-- **Regex-based categorization**: The `CATEGORIES` dict maps category names to regex patterns. Patterns are checked in order—first match wins—so more specific patterns must precede general ones.
+- **Regex-based categorization**: The `CATEGORIES` dict maps category names to regex patterns. Patterns are checked in order—first match wins—so more specific patterns must precede general ones. Patterns are pre-compiled at module load.
 
-- **Platform detection**: Scripts auto-detect macOS vs Windows Steam installation paths for Old World.
+- **Platform detection**: `find_game_data()` auto-detects macOS vs Windows Steam installation paths for Old World.
 
 - **Memory management**: Extraction uses `gc.collect()` every 500 sprites and explicitly deletes image data to handle the ~4000+ sprites without memory issues.
 
@@ -45,17 +72,38 @@ python generate_gallery.py
 
 ```
 extracted/
-├── gallery.html      # Interactive HTML browser
+├── index.html        # Interactive HTML browser (for GitHub Pages)
+├── gallery.html      # Same content (legacy compatibility)
 └── sprites/
     ├── portraits/    # Character portraits by nation
     ├── units/        # Military unit icons
     ├── crests/       # Nation/family emblems
-    └── ...           # ~30 categories total
+    └── ...           # ~40 categories total
+```
+
+## Testing
+
+Tests are in `tests/test_categories.py` and cover the categorization regex patterns extensively (95 tests). Run with:
+
+```bash
+pytest -v
 ```
 
 ## Category Regex Patterns
 
-When adding new categories or refining existing ones, edit the `CATEGORIES` dict in `extract_oldworld.py`. Remember:
+When adding new categories or refining existing ones, edit the `CATEGORIES` dict in `src/pinacotheca/categories.py`. Remember:
 - Order matters: first matching pattern wins
 - Use raw strings (r'...') for regex patterns
 - The 'other' category is the catch-all at the end
+- Add corresponding display info to `CATEGORY_INFO`
+- Add tests in `tests/test_categories.py`
+
+## GitHub Pages Deployment
+
+The gallery is deployed to the `gh-pages` branch using `ghp-import`. The workflow:
+
+1. Run `pinacotheca` to extract sprites locally (requires game installed)
+2. Run `pinacotheca-deploy` to push to `gh-pages` branch
+3. GitHub Pages serves from `gh-pages` branch
+
+Note: Only sprites (~500MB) are deployed, not textures (~2GB).

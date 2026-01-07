@@ -4,6 +4,8 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
+![Pinacotheca](pinacotheca.jpg)
+
 A Python tool for extracting and cataloging sprite assets from **Old World** (the 4X strategy game by Mohawk Games). Uses [UnityPy](https://github.com/K0lb3/UnityPy) to extract sprites directly from Unity asset bundles—no external tools like AssetRipper needed.
 
 **[Browse the Gallery](https://becked.github.io/pinacotheca/)**
