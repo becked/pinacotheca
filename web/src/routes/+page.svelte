@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { browser } from '$app/environment';
+	import { base } from '$app/paths';
 	import { Button } from '$lib/components/ui/button';
 	import HomeView from '$lib/components/HomeView.svelte';
 	import ResultsView from '$lib/components/ResultsView.svelte';
@@ -82,7 +83,7 @@
 		if (filters.aspectRatio !== 'all') params.set('ar', filters.aspectRatio);
 		if (lightboxSprite) params.set('sprite', lightboxSprite.id);
 
-		const newUrl = params.toString() ? `?${params}` : '/';
+		const newUrl = params.toString() ? `${base}/?${params}` : `${base}/`;
 		goto(newUrl, { replaceState: replace, noScroll: true, keepFocus: true });
 	}
 
