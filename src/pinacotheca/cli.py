@@ -159,7 +159,7 @@ Examples:
     index_file = args.output / "index.html"
     if not index_file.exists():
         print(f"ERROR: No index.html found in {args.output}", file=sys.stderr)
-        print("Run 'pinacotheca-gallery' first to generate the gallery.", file=sys.stderr)
+        print("Run 'cd web && npm run build' first to generate the gallery.", file=sys.stderr)
         sys.exit(1)
 
     sprites_dir = args.output / "sprites"
