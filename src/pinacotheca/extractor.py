@@ -45,6 +45,7 @@ def load_exclusion_pattern() -> re.Pattern[str] | None:
     combined = "|".join(patterns)
     return re.compile(combined, re.IGNORECASE)
 
+
 if TYPE_CHECKING:
     from UnityPy import Environment
 

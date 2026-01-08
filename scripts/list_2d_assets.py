@@ -38,23 +38,20 @@ def find_game_data() -> Path | None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="List 2D assets from Old World")
     parser.add_argument(
-        "--type", "-t",
+        "--type",
+        "-t",
         choices=["Sprite", "Texture2D", "all"],
         default="all",
-        help="Asset type to list (default: all = show summary)"
+        help="Asset type to list (default: all = show summary)",
     )
     parser.add_argument(
-        "--filter", "-f",
+        "--filter",
+        "-f",
         type=str,
         default=None,
-        help="Filter by name pattern (case-insensitive regex)"
+        help="Filter by name pattern (case-insensitive regex)",
     )
-    parser.add_argument(
-        "--limit", "-n",
-        type=int,
-        default=None,
-        help="Limit output to N results"
-    )
+    parser.add_argument("--limit", "-n", type=int, default=None, help="Limit output to N results")
     args = parser.parse_args()
 
     try:
@@ -124,7 +121,7 @@ def main() -> None:
             assets.sort(key=lambda x: x[1].lower())
 
             if args.limit:
-                assets = assets[:args.limit]
+                assets = assets[: args.limit]
 
             print(f"\n{args.type} assets ({len(assets):,} found):")
             print("-" * 60)
