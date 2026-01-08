@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { base } from '$app/paths';
 	import type { Sprite, CategoryData, FilterState } from '$lib/types';
 	import SpriteCard from './SpriteCard.svelte';
 	import { getCategoryInfo } from '$lib/utils/categories';
@@ -55,8 +56,8 @@
 <!-- Header Section - Brown -->
 <header style="background-color: var(--color-surface);">
 	<div style="max-width: 1024px; margin: 0 auto; padding: 1.5rem; display: flex; align-items: center; justify-content: center; gap: 1.5rem;">
-		<a href="/" style="display: flex; align-items: center; gap: 1.5rem; text-decoration: none;">
-			<img src="/pinacotheca.jpg" alt="Pinacotheca" style="height: 4rem; width: auto;" />
+		<a href="{base}/" style="display: flex; align-items: center; gap: 1.5rem; text-decoration: none;">
+			<img src="{base}/pinacotheca.jpg" alt="Pinacotheca" style="height: 4rem; width: auto;" />
 			<h1 style="font-size: 4rem; font-weight: bold; letter-spacing: -0.025em; color: var(--color-foreground);">
 				Pinacotheca
 			</h1>
