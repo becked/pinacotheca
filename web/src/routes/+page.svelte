@@ -2,7 +2,6 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { browser } from '$app/environment';
-	import Fuse from 'fuse.js';
 	import { Button } from '$lib/components/ui/button';
 	import HomeView from '$lib/components/HomeView.svelte';
 	import ResultsView from '$lib/components/ResultsView.svelte';
@@ -11,22 +10,20 @@
 	import type { Sprite, FilterState } from '$lib/types';
 	import manifest from '$lib/../../src/data/manifest.json';
 
-	// Build searchable sprite list with humanized names for Fuse.js
+	// Build searchable sprite list with humanized names
 	interface SearchableSprite extends Sprite {
 		displayName: string;
+		searchText: string; // Combined lowercase text for searching
 	}
 
-	const searchableSprites: SearchableSprite[] = (manifest.sprites as Sprite[]).map((s) => ({
-		...s,
-		displayName: humanizeName(s.name)
-	}));
-
-	// Create Fuse instance for fuzzy search
-	const fuse = new Fuse(searchableSprites, {
-		keys: ['displayName'],
-		threshold: 0.3, // 0 = exact match, 1 = match anything
-		ignoreLocation: true, // Search anywhere in the string
-		includeScore: true
+	const searchableSprites: SearchableSprite[] = (manifest.sprites as Sprite[]).map((s) => {
+		const displayName = humanizeName(s.name);
+		return {
+			...s,
+			displayName,
+			// Combine name and displayName, normalize for searching
+			searchText: `${s.name} ${displayName}`.toLowerCase().replace(/[_-]/g, ' ')
+		};
 	});
 
 	// Filter state
@@ -91,14 +88,23 @@
 
 	// Apply all filters except category (for computing per-category counts)
 	let spritesBeforeCategoryFilter = $derived.by(() => {
-		let result: Sprite[];
+		let result: SearchableSprite[];
 
-		// Filter by search query using Fuse.js fuzzy search
+		// Filter by search query using substring matching
 		if (filters.query) {
-			const fuseResults = fuse.search(filters.query);
-			result = fuseResults.map((r) => r.item as Sprite);
+			// Normalize query: lowercase, replace separators with spaces, split into terms
+			const queryTerms = filters.query
+				.toLowerCase()
+				.replace(/[_-]/g, ' ')
+				.split(/\s+/)
+				.filter((term) => term.length > 0);
+
+			// Match sprites that contain ALL query terms (AND search)
+			result = searchableSprites.filter((s) =>
+				queryTerms.every((term) => s.searchText.includes(term))
+			);
 		} else {
-			result = manifest.sprites as Sprite[];
+			result = searchableSprites;
 		}
 
 		// Filter by dimensions
