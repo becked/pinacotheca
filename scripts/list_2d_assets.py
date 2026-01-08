@@ -107,9 +107,8 @@ def main() -> None:
                     height = getattr(data, "m_Height", 0)
 
                 # Apply filter
-                if args.filter:
-                    if not re.search(args.filter, name, re.IGNORECASE):
-                        continue
+                if args.filter and not re.search(args.filter, name, re.IGNORECASE):
+                    continue
 
                 assets.append((type_name, name, width, height))
 
@@ -129,7 +128,7 @@ def main() -> None:
 
             print(f"\n{args.type} assets ({len(assets):,} found):")
             print("-" * 60)
-            for type_name, name, width, height in assets:
+            for _type_name, name, width, height in assets:
                 print(f"  {name:<50} {width}x{height}")
 
     finally:

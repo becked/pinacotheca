@@ -144,7 +144,7 @@ def extract_sprites(
 
         if verbose:
             if exclude_pattern:
-                print(f"\nExclusion patterns loaded from .exclude-patterns")
+                print("\nExclusion patterns loaded from .exclude-patterns")
             print("\nLoading asset index...")
 
         env: Environment = UnityPy.Environment()

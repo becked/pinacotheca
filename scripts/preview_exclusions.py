@@ -2,9 +2,8 @@
 """Preview which sprites would be excluded by .exclude-patterns."""
 
 import os
-from pathlib import Path
 
-from pinacotheca.extractor import load_exclusion_pattern, find_game_data
+from pinacotheca.extractor import find_game_data, load_exclusion_pattern
 
 
 def main() -> None:
