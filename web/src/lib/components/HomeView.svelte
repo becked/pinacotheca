@@ -69,6 +69,7 @@
 				value={searchQuery}
 				oninput={(e) => (searchQuery = (e.target as HTMLInputElement).value)}
 				onkeydown={handleKeyDown}
+				autofocus
 				style="width: 100%; padding: 1rem 1.5rem; padding-right: 3rem; font-size: 1.125rem; border: 2px solid var(--color-border); border-radius: 0.5rem; background-color: var(--color-background); color: var(--color-foreground);"
 			/>
 			{#if searchQuery}
