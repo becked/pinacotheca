@@ -255,6 +255,9 @@ UNIT_MESHES: list[tuple[str, str]] = [
     ("ClubThrower_GEO", "CLUB_THROWER"),
     ("Elite_ClubThrower_GEO", "ELITE_CLUB_THROWER"),
     ("Conscript_GEO", "CONSCRIPT"),
+    ("Phalangite", "PHALANGITE"),
+    ("Hastatus", "HASTATUS"),
+    ("Peltast_GEO", "PELTAST"),
     # Cavalry - Ranged
     ("Horse_Archer_GEO", "HORSE_ARCHER"),
     ("Camel_Archer_GEO", "CAMEL_ARCHER"),
@@ -269,6 +272,7 @@ UNIT_MESHES: list[tuple[str, str]] = [
     ("Amazon_Cavalry_Horse_GEO", "AMAZON_CAVALRY"),
     ("Elite_Amazon_Cavalry_GEO", "ELITE_AMAZON_CAVALRY"),
     ("YeuzhiUU2_KushanCavalry_GEO", "KUSHAN_CAVALRY"),
+    ("Kushite_Cavalry_GEO", "MOUNTED_LANCER"),
     # Chariots
     ("Chariot_GEO", "CHARIOT"),
     ("Light Chariot", "LIGHT_CHARIOT"),
@@ -288,6 +292,8 @@ UNIT_MESHES: list[tuple[str, str]] = [
     ("Siege_Tower_GEO", "SIEGE_TOWER"),
     ("Catapult_GEO", "CATAPULT"),
     ("Onager_GEO", "ONAGER"),
+    ("Polybolos_GEO", "POLYBOLOS"),
+    ("mangonel_GEO", "MANGONEL"),
     # Naval
     ("Bireme_GEO", "BIREME"),
     ("Trireme_GEO", "TRIREME"),
@@ -299,6 +305,8 @@ UNIT_MESHES: list[tuple[str, str]] = [
     # Aksum
     ("AksumUU1DmtWarrior_GEO", "AKSUM_DMT_WARRIOR"),
     ("AksumUU2ShotelaiWarrior_GEO", "AKSUM_SHOTELAI_WARRIOR"),
+    ("KushiteArcherlvl1", "MEDJAY_ARCHER"),
+    ("KushiteArcherlvl2", "BEJA_ARCHER"),
     # Nomads
     ("Nomad_Raider_GEO", "NOMAD_RAIDER"),
     ("Nomad_Skirmisher_GEO", "NOMAD_SKIRMISHER"),
@@ -310,6 +318,12 @@ UNIT_MESHES: list[tuple[str, str]] = [
     ("Elite_Skirmisher_GEO", "ELITE_SKIRMISHER"),
     ("Elite_Warlord_GEO", "ELITE_WARLORD"),
     ("Elite_Maurader_GEO", "ELITE_MARAUDER"),
+    # Yuezhi
+    ("YuezchiUU1_SteppeRider_GEO", "STEPPE_RIDER"),
+    ("YueezhiUU3_KushanWarlord_GEO", "KUSHAN_WARLORDS"),
+    # Non-combat
+    ("Settler_GEO2", "SETTLER"),
+    ("Worker_GEO", "WORKER"),
     # Religious disciples
     ("Disciple_Buddhist_GEO", "DISCIPLE_BUDDHIST"),
     ("Disciple_Hindu_GEO", "DISCIPLE_HINDU"),
@@ -395,23 +409,29 @@ def extract_unit_meshes(
 
         mesh_lookup: dict[str, Any] = {}
         texture_lookup: dict[str, Any] = {}
+        unreadable = 0
 
         for obj in env.objects:
-            if obj.type.name == "Mesh":
-                data = obj.read()
-                name = getattr(data, "m_Name", "")
-                if name:
-                    mesh_lookup[name] = obj
-            elif obj.type.name == "Texture2D":
-                data = obj.read()
-                name = getattr(data, "m_Name", "")
-                if name and ("diffuse" in name.lower() or "albedo" in name.lower()):
-                    # Store without _Diffuse suffix for easier matching
-                    base_name = name.lower().replace("_diffuse", "").replace("_albedo", "")
-                    texture_lookup[base_name] = obj
+            try:
+                if obj.type.name == "Mesh":
+                    data = obj.read()
+                    name = getattr(data, "m_Name", "")
+                    if name:
+                        mesh_lookup[name] = obj
+                elif obj.type.name == "Texture2D":
+                    data = obj.read()
+                    name = getattr(data, "m_Name", "")
+                    if name and ("diffuse" in name.lower() or "albedo" in name.lower()):
+                        # Store without _Diffuse suffix for easier matching
+                        base_name = name.lower().replace("_diffuse", "").replace("_albedo", "")
+                        texture_lookup[base_name] = obj
+            except Exception:
+                unreadable += 1
 
         if verbose:
             print(f"Found {len(mesh_lookup)} meshes, {len(texture_lookup)} diffuse textures")
+            if unreadable:
+                print(f"Skipped {unreadable} unreadable objects")
             print(f"Processing {len(UNIT_MESHES)} unit meshes...\n")
 
         rendered = 0

@@ -23,7 +23,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "UnityPy>=1.10.0",
+    "UnityPy>=1.25.0",
     "Pillow>=10.0.0",
     "moderngl>=5.8.0",
     "numpy>=1.24.0",
