@@ -42,6 +42,7 @@ dev = [
 pinacotheca = "pinacotheca.cli:main"
 pinacotheca-gallery = "pinacotheca.cli:gallery"
 pinacotheca-deploy = "pinacotheca.cli:deploy"
+pinacotheca-atlas = "pinacotheca.cli:atlas"
 
 [project.urls]
 Homepage = "https://github.com/becked/pinacotheca"

@@ -9,11 +9,13 @@ __all__ = [
     "extract_sprites",
     "extract_unit_meshes",
     "generate_gallery",
+    "generate_atlases",
     "categorize",
     "CATEGORIES",
     "render_mesh_to_image",
 ]
 
+from pinacotheca.atlas import generate_atlases
 from pinacotheca.categories import CATEGORIES, categorize
 from pinacotheca.extractor import extract_sprites, extract_unit_meshes
 from pinacotheca.gallery import generate_gallery

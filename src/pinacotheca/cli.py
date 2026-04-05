@@ -207,5 +207,80 @@ Examples:
         sys.exit(1)
 
 
+def atlas() -> None:
+    """Generate texture atlases from extracted sprites."""
+    parser = argparse.ArgumentParser(
+        description="Generate texture atlases from extracted sprites for map rendering",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  pinacotheca-atlas                          # Generate all atlases
+  pinacotheca-atlas -c terrain height        # Only terrain and height
+  pinacotheca-atlas --lossy 95               # Lossy WebP for smaller files
+        """,
+    )
+    parser.add_argument(
+        "-i",
+        "--input",
+        type=Path,
+        default=Path.cwd() / "extracted" / "sprites",
+        help="Directory containing categorized sprites (default: ./extracted/sprites)",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=Path.cwd() / "output" / "atlases",
+        help="Output directory for atlas files (default: ./output/atlases)",
+    )
+    parser.add_argument(
+        "-c",
+        "--categories",
+        nargs="+",
+        default=None,
+        help="Atlas categories to generate (default: all). "
+        "Choices: terrain, height, improvement, resource, specialist, city",
+    )
+    parser.add_argument(
+        "--lossy",
+        type=int,
+        default=None,
+        metavar="QUALITY",
+        help="Use lossy WebP at given quality 0-100 (default: lossless)",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Suppress progress output",
+    )
+
+    args = parser.parse_args()
+
+    if not args.input.is_dir():
+        print(f"ERROR: Sprites directory not found: {args.input}", file=sys.stderr)
+        print("Run 'pinacotheca' first to extract sprites.", file=sys.stderr)
+        sys.exit(1)
+
+    from pinacotheca.atlas import generate_atlases
+
+    try:
+        results = generate_atlases(
+            sprites_dir=args.input,
+            output_dir=args.output,
+            categories=args.categories,
+            lossy_quality=args.lossy,
+            verbose=not args.quiet,
+        )
+
+        if not args.quiet:
+            total = sum(results.values())
+            print(f"\nDone! {total} sprites across {len(results)} atlases → {args.output}")
+
+    except ValueError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     main()

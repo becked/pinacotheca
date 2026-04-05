@@ -32,6 +32,7 @@ CATEGORY_INFO: Final[dict[str, tuple[str, str]]] = {
     "missions": ("Missions", "🎯"),
     "projects": ("Projects", "🔨"),
     "terrains": ("Terrains", "🏔️"),
+    "heights": ("Heights", "⛰️"),
     "families": ("Families", "👨‍👩‍👧"),
     "nations": ("Nations", "🏴"),
     "theology": ("Theologies", "⛪"),
@@ -122,6 +123,7 @@ CATEGORIES: Final[dict[str, str]] = {
         r"^(Colosseum|Colossus|Pantheon|Library|Acropolis|Heliopolis|Mausoleum|"
         r"Necropolis|Cothon|Circus|Hanging|Bazaar|Oracle)"
     ),
+    "heights": r"^(Hills|Mountain|Volcano)EditorIcon$",
     # Catch-all (should be minimal now)
     "other": r".*",
 }

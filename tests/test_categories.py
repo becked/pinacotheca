@@ -222,6 +222,18 @@ class TestCategorize:
     def test_wonders(self, name: str) -> None:
         assert categorize(name) == "wonders"
 
+    # Heights
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "HillsEditorIcon",
+            "MountainEditorIcon",
+            "VolcanoEditorIcon",
+        ],
+    )
+    def test_heights(self, name: str) -> None:
+        assert categorize(name) == "heights"
+
     # Catch-all
     def test_other_catchall(self) -> None:
         assert categorize("random_unknown_sprite") == "other"
