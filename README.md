@@ -16,7 +16,9 @@ A Python tool for extracting and cataloging sprite assets from **Old World** (th
 
 - Pure Python extraction from Unity asset bundles
 - Automatic categorization of 4000+ sprites into 40+ categories
-- SvelteKit gallery with fuzzy search, filters, and lightbox viewing
+- 3D unit mesh rendering to 2D images
+- Texture atlas generation for map rendering
+- SvelteKit gallery with search, filters, and lightbox viewing
 - Cross-platform support (macOS and Windows)
 - Memory-efficient processing for large asset files
 
@@ -56,21 +58,20 @@ pinacotheca -o ~/my-sprites
 pinacotheca --game-data "/path/to/Old World/OldWorld_Data"
 ```
 
-### Build the Gallery
-
-After extracting sprites, build the SvelteKit gallery:
+### Web Gallery
 
 ```bash
-cd web
-npm install   # First time only
-npm run build
+# Install web dependencies (first time only)
+cd web && npm install && cd ..
+
+# Run the dev server
+pinacotheca-web
+
+# Build for production (outputs to extracted/)
+pinacotheca-web-build
 ```
 
-This outputs the gallery to `extracted/` alongside the sprites.
-
 ### Deploy to GitHub Pages
-
-After building, deploy the gallery to GitHub Pages:
 
 ```bash
 # Deploy to gh-pages branch
@@ -78,6 +79,30 @@ pinacotheca-deploy
 
 # Preview without pushing
 pinacotheca-deploy --dry-run
+```
+
+### Legacy HTML Gallery
+
+Generate a standalone HTML gallery (local use, not part of the deployed site):
+
+```bash
+# Generate gallery from extracted sprites
+pinacotheca-gallery
+
+# Custom sprites location and output
+pinacotheca-gallery -s ~/my-sprites/sprites -o ~/my-gallery
+```
+
+### Texture Atlases
+
+Generate atlases for map rendering (local use, not part of the gallery):
+
+```bash
+# Generate all atlases
+pinacotheca-atlas
+
+# Only specific categories
+pinacotheca-atlas -c terrain height
 ```
 
 ## Development
@@ -107,11 +132,13 @@ pre-commit install
 ```
 pinacotheca/
 ├── src/pinacotheca/
-│   ├── __init__.py       # Package exports
+│   ├── __init__.py       # Package exports (version via importlib.metadata)
 │   ├── categories.py     # Sprite categorization (regex patterns)
 │   ├── extractor.py      # UnityPy extraction logic
+│   ├── renderer.py       # 3D mesh rendering
+│   ├── atlas.py          # Texture atlas generation
 │   ├── gallery.py        # Legacy HTML gallery generator
-│   └── cli.py            # Command-line interface
+│   └── cli.py            # CLI entry points
 ├── web/                  # SvelteKit gallery (primary web interface)
 │   ├── scripts/
 │   │   └── generate-manifest.ts
@@ -119,12 +146,15 @@ pinacotheca/
 │   │   ├── lib/          # Components, utils, types
 │   │   └── routes/       # SvelteKit pages
 │   └── svelte.config.js
+├── scripts/
+│   └── bump-version.py   # Version bump utility
 ├── tests/
 │   └── test_categories.py
 ├── extracted/            # Output directory (git-ignored)
 │   ├── index.html        # Gallery (built from web/)
 │   └── sprites/          # Categorized sprite images
-└── pyproject.toml        # Project configuration
+├── CHANGELOG.md
+└── pyproject.toml        # Project configuration (single source of version)
 ```
 
 ## Sprite Categories

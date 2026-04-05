@@ -12,12 +12,19 @@ from pinacotheca.categories import get_category_display
 DEFAULT_OUTPUT_DIR = Path.cwd() / "extracted"
 
 
-def generate_gallery(output_dir: Path | None = None, *, verbose: bool = True) -> Path | None:
+def generate_gallery(
+    output_dir: Path | None = None,
+    sprites_dir: Path | None = None,
+    *,
+    verbose: bool = True,
+) -> Path | None:
     """
     Generate an HTML gallery from extracted sprites.
 
     Args:
-        output_dir: Directory containing sprites/ subdirectory
+        output_dir: Directory to write gallery HTML into
+        sprites_dir: Directory containing categorized sprite subdirectories.
+                     Defaults to output_dir / "sprites".
         verbose: Print progress messages
 
     Returns:
@@ -26,7 +33,9 @@ def generate_gallery(output_dir: Path | None = None, *, verbose: bool = True) ->
     if output_dir is None:
         output_dir = DEFAULT_OUTPUT_DIR
 
-    sprites_dir = output_dir / "sprites"
+    if sprites_dir is None:
+        sprites_dir = output_dir / "sprites"
+
     if not sprites_dir.exists():
         if verbose:
             print(f"ERROR: Sprites directory not found: {sprites_dir}")
@@ -70,7 +79,7 @@ def generate_gallery(output_dir: Path | None = None, *, verbose: bool = True) ->
         images = "\n".join(
             [
                 f'<div class="sprite" title="{s}">'
-                f'<img src="sprites/{cat_id}/{s}" loading="lazy">'
+                f'<img src="{sprites_dir / cat_id / s}" loading="lazy">'
                 f'<span class="label">{s[:-4]}</span>'
                 f"</div>"
                 for s in sprites
@@ -86,14 +95,9 @@ def generate_gallery(output_dir: Path | None = None, *, verbose: bool = True) ->
 
     html = _generate_html_template(nav_html, sections_html, total)
 
-    # For GitHub Pages, output as index.html
-    gallery_path = output_dir / "index.html"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    gallery_path = output_dir / "gallery.html"
     gallery_path.write_text(html)
-
-    # Also create gallery.html as symlink/copy for backwards compatibility
-    legacy_path = output_dir / "gallery.html"
-    if not legacy_path.exists():
-        legacy_path.write_text(html)
 
     if verbose:
         print(f"Gallery saved to: {gallery_path}")

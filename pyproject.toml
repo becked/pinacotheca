@@ -1,6 +1,6 @@
 [project]
 name = "pinacotheca"
-version = "1.0.0"
+version = "1.1.0"
 description = "Extract and catalog sprite assets from Old World (4X strategy game by Mohawk Games)"
 readme = "README.md"
 license = { text = "MIT" }
@@ -41,6 +41,8 @@ dev = [
 [project.scripts]
 pinacotheca = "pinacotheca.cli:main"
 pinacotheca-gallery = "pinacotheca.cli:gallery"
+pinacotheca-web = "pinacotheca.cli:web_dev"
+pinacotheca-web-build = "pinacotheca.cli:web_build"
 pinacotheca-deploy = "pinacotheca.cli:deploy"
 pinacotheca-atlas = "pinacotheca.cli:atlas"
 

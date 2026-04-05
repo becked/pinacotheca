@@ -16,14 +16,34 @@ source venv/bin/activate
 # Install package with dev dependencies
 pip install -e ".[dev]"
 
+# Install web dependencies
+cd web && npm install
+```
+
+### Core Workflow
+
+```bash
 # Extract sprites from Old World game assets
 pinacotheca
 
-# Regenerate the HTML gallery from already-extracted sprites (legacy)
-pinacotheca-gallery
+# Run SvelteKit dev server
+pinacotheca-web
+
+# Build production gallery (outputs to extracted/)
+pinacotheca-web-build
 
 # Deploy gallery to GitHub Pages (gh-pages branch)
 pinacotheca-deploy
+
+# Generate texture atlases (local use, not deployed)
+pinacotheca-atlas
+```
+
+### Other Commands
+
+```bash
+# Generate standalone HTML gallery (legacy, not part of main workflow)
+pinacotheca-gallery
 
 # Run tests
 pytest
@@ -34,25 +54,9 @@ ruff format .
 
 # Run type checker
 mypy src/
-```
 
-### Web Gallery (SvelteKit)
-
-```bash
-# Install web dependencies
-cd web && npm install
-
-# Run dev server (for development)
-npm run dev
-
-# Build production gallery (outputs to ../extracted/)
-npm run build
-
-# Generate manifest only (from extracted sprites)
-npm run manifest
-
-# Type check
-npm run check
+# Bump version
+python scripts/bump-version.py 1.2.0
 ```
 
 ## Architecture
@@ -91,7 +95,7 @@ web/                  # SvelteKit gallery (primary web interface)
 
 - **`gallery.py`**: Contains `generate_gallery()` which builds an interactive HTML gallery with search and lightbox viewing.
 
-- **`cli.py`**: Entry points for the three CLI commands: `pinacotheca`, `pinacotheca-gallery`, `pinacotheca-deploy`.
+- **`cli.py`**: Entry points for CLI commands: `pinacotheca`, `pinacotheca-web`, `pinacotheca-web-build`, `pinacotheca-deploy`, `pinacotheca-gallery`, `pinacotheca-atlas`.
 
 ### Key Design Patterns
 
@@ -144,7 +148,7 @@ When adding new categories or refining existing ones:
 pinacotheca
 
 # 2. Rebuild gallery
-cd web && npm run build
+pinacotheca-web-build
 ```
 
 The extractor automatically cleans up sprite folders that no longer match valid category names, then re-extracts those sprites to their correct new categories.
@@ -153,17 +157,26 @@ The extractor automatically cleans up sprite folders that no longer match valid 
 
 The gallery is deployed to the `gh-pages` branch using `ghp-import`. The workflow:
 
-1. Run `pinacotheca` to extract sprites locally (requires game installed)
-2. Run `cd web && npm run build` to build the SvelteKit gallery
-3. Run `pinacotheca-deploy` to push to `gh-pages` branch
-4. GitHub Pages serves from `gh-pages` branch
+1. `pinacotheca` — extract sprites locally (requires game installed)
+2. `pinacotheca-web-build` — build the SvelteKit gallery into `extracted/`
+3. `pinacotheca-deploy` — push `extracted/` to `gh-pages` branch
 
-Note: Only sprites (~500MB) are deployed, not textures (~2GB).
+GitHub Pages serves from the `gh-pages` branch. Only sprites (~500MB) are deployed, not textures (~2GB).
+
+## Versioning
+
+Version is defined in `pyproject.toml` and read at runtime via `importlib.metadata`. To bump:
+
+```bash
+python scripts/bump-version.py 1.2.0  # Updates pyproject.toml + CHANGELOG.md
+git commit -am 'Bump version to 1.2.0'
+git tag v1.2.0
+```
 
 ## Web Gallery Features
 
 The SvelteKit gallery (`web/`) provides:
-- **Fuzzy search** with autocomplete dropdown (Fuse.js)
+- **Search** with autocomplete dropdown
 - **Category navigation** with sprite counts
 - **Dimension filters** (min/max width/height, aspect ratio)
 - **Lightbox** with download button and keyboard navigation

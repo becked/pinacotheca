@@ -10,11 +10,10 @@ import sys
 from pathlib import Path
 
 from pinacotheca.extractor import extract_sprites, extract_unit_meshes
-from pinacotheca.gallery import generate_gallery
 
 
 def main() -> None:
-    """Main entry point - extract sprites and generate gallery."""
+    """Main entry point - extract sprites from Old World game assets."""
     parser = argparse.ArgumentParser(
         description="Extract sprites from Old World game assets",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -46,11 +45,6 @@ Examples:
         help="Suppress progress output",
     )
     parser.add_argument(
-        "--no-gallery",
-        action="store_true",
-        help="Skip gallery generation",
-    )
-    parser.add_argument(
         "--no-meshes",
         action="store_true",
         help="Skip 3D mesh extraction (renders unit models to 2D images)",
@@ -72,9 +66,6 @@ Examples:
                 verbose=not args.quiet,
             )
 
-        if not args.no_gallery:
-            generate_gallery(output_dir=args.output, verbose=not args.quiet)
-
     except FileNotFoundError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
@@ -83,16 +74,25 @@ Examples:
 
 
 def gallery() -> None:
-    """Regenerate gallery from existing sprites."""
+    """Regenerate legacy HTML gallery from existing sprites."""
+    from pinacotheca.gallery import generate_gallery
+
     parser = argparse.ArgumentParser(
-        description="Generate HTML gallery from extracted sprites",
+        description="Generate standalone HTML gallery from extracted sprites",
     )
     parser.add_argument(
         "-o",
         "--output",
         type=Path,
-        default=Path.cwd() / "extracted",
-        help="Directory containing sprites/ (default: ./extracted)",
+        default=Path.cwd() / "output" / "gallery",
+        help="Output directory for gallery (default: ./output/gallery)",
+    )
+    parser.add_argument(
+        "-s",
+        "--sprites",
+        type=Path,
+        default=Path.cwd() / "extracted" / "sprites",
+        help="Directory containing categorized sprites (default: ./extracted/sprites)",
     )
     parser.add_argument(
         "-q",
@@ -103,7 +103,11 @@ def gallery() -> None:
 
     args = parser.parse_args()
 
-    result = generate_gallery(output_dir=args.output, verbose=not args.quiet)
+    result = generate_gallery(
+        output_dir=args.output,
+        sprites_dir=args.sprites,
+        verbose=not args.quiet,
+    )
     if result is None:
         sys.exit(1)
 
@@ -130,11 +134,14 @@ Examples:
         default=Path.cwd() / "extracted",
         help="Directory to deploy (default: ./extracted)",
     )
+    from importlib.metadata import version
+
+    default_message = f"Deploy gallery v{version('pinacotheca')}"
     parser.add_argument(
         "-m",
         "--message",
-        default="Update gallery",
-        help="Commit message for gh-pages",
+        default=default_message,
+        help=f"Commit message for gh-pages (default: '{default_message}')",
     )
     parser.add_argument(
         "-n",
@@ -159,7 +166,7 @@ Examples:
     index_file = args.output / "index.html"
     if not index_file.exists():
         print(f"ERROR: No index.html found in {args.output}", file=sys.stderr)
-        print("Run 'cd web && npm run build' first to generate the gallery.", file=sys.stderr)
+        print("Run 'pinacotheca-web-build' first to generate the gallery.", file=sys.stderr)
         sys.exit(1)
 
     sprites_dir = args.output / "sprites"
@@ -205,6 +212,83 @@ Examples:
     except subprocess.CalledProcessError as e:
         print(f"ERROR: ghp-import failed: {e.stderr}", file=sys.stderr)
         sys.exit(1)
+
+
+def _find_web_dir() -> Path:
+    """Locate the web/ directory relative to the project root."""
+    # Walk up from this file to find the repo root containing web/
+    cli_path = Path(__file__).resolve()
+    for parent in cli_path.parents:
+        candidate = parent / "web"
+        if candidate.is_dir() and (candidate / "package.json").exists():
+            return candidate
+    # Fallback: relative to cwd
+    cwd_candidate = Path.cwd() / "web"
+    if cwd_candidate.is_dir():
+        return cwd_candidate
+    raise FileNotFoundError(
+        "Could not find web/ directory. Run from the project root or use --web-dir."
+    )
+
+
+def web_dev() -> None:
+    """Run the SvelteKit development server."""
+    parser = argparse.ArgumentParser(
+        description="Run the SvelteKit gallery dev server",
+    )
+    parser.add_argument(
+        "--web-dir",
+        type=Path,
+        default=None,
+        help="Path to web/ directory (auto-detected if not specified)",
+    )
+
+    args = parser.parse_args()
+
+    try:
+        web_dir = args.web_dir or _find_web_dir()
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        subprocess.run(["npm", "run", "dev"], cwd=web_dir, check=True)
+    except KeyboardInterrupt:
+        pass
+    except FileNotFoundError:
+        print("ERROR: npm not found. Install Node.js first.", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        sys.exit(e.returncode)
+
+
+def web_build() -> None:
+    """Build the SvelteKit gallery for production."""
+    parser = argparse.ArgumentParser(
+        description="Build the SvelteKit gallery (outputs to extracted/)",
+    )
+    parser.add_argument(
+        "--web-dir",
+        type=Path,
+        default=None,
+        help="Path to web/ directory (auto-detected if not specified)",
+    )
+
+    args = parser.parse_args()
+
+    try:
+        web_dir = args.web_dir or _find_web_dir()
+    except FileNotFoundError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        subprocess.run(["npm", "run", "build"], cwd=web_dir, check=True)
+    except FileNotFoundError:
+        print("ERROR: npm not found. Install Node.js first.", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        sys.exit(e.returncode)
 
 
 def atlas() -> None:

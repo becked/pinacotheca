@@ -4,7 +4,9 @@ Pinacotheca - Old World Sprite Extractor
 Extract and catalog sprite assets from the Old World strategy game.
 """
 
-__version__ = "1.0.0"
+from importlib.metadata import version as _version
+
+__version__ = _version("pinacotheca")
 __all__ = [
     "extract_sprites",
     "extract_unit_meshes",
