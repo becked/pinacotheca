@@ -153,6 +153,12 @@ Vertical spacing:   132 pixels (between hex centers, same column)
 
 The horizontal spacing (199) is less than the sprite width (211), creating 12px of intentional overlap. The vertical spacing (132) equals 1.5 * HEX_RADIUS_Y — the standard pointy-top tessellation formula. These overlaps hide any seams between adjacent masked sprites.
 
+### Avoiding Tile Seams
+
+The overlap and edge dilation are necessary but not sufficient to prevent visible seams. If sprites are placed as individual objects and the renderer snaps each one to integer pixel positions independently, sub-pixel rounding mismatches between adjacent tiles can still produce hairline gaps where the background shows through. This is especially visible on water tiles where the uniform color makes even a 1px black line obvious.
+
+The recommended approach is to **composite terrain into a single image** (see the BitmapLayer section below) rather than rendering individual tile sprites. Drawing tiles onto one canvas with `drawImage()` handles sub-pixel positioning correctly and eliminates inter-tile seams entirely.
+
 ### Coordinate Conversion
 
 ```typescript
