@@ -406,7 +406,7 @@ def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
 # scrambled-hieroglyph artifacts where the alphamap encodes the building's
 # own footprint. See docs/extracting-3d-buildings.md for the full story.
 SPLAT_MATERIAL_PREFIXES: tuple[str, ...] = ("Splat",)
-SPLAT_MATERIAL_EXACT: tuple[str, ...] = ("WaterNoFoam",)
+SPLAT_MATERIAL_EXACT: tuple[str, ...] = ("WaterNoFoam", "BathWater")
 
 
 def _is_splat_material_name(name: str) -> bool:
