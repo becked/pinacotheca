@@ -226,6 +226,7 @@ def render_mesh_to_image(
     *,
     autocrop: bool = True,
     padding: int = 32,
+    force_upright: bool = False,
 ) -> "Image.Image":
     """
     Render a textured 3D mesh to a 2D PNG image.
@@ -237,6 +238,11 @@ def render_mesh_to_image(
         height: Render height in pixels (before cropping)
         autocrop: If True, crop to non-transparent content with padding
         padding: Padding pixels around content when autocropping
+        force_upright: If True, always treat Y as up and use a slightly elevated
+            front camera (3/4 perspective). Use this for buildings/improvements,
+            which are authored Y-up regardless of footprint shape. When False,
+            a heuristic rotates the camera for meshes that appear lying down
+            (some unit poses).
 
     Returns:
         PIL Image with rendered mesh on transparent background
@@ -284,23 +290,39 @@ def render_mesh_to_image(
         center, extent, _ = compute_mesh_bounds(vertices)
         max_extent = float(extent.max())
 
-        # Detect if mesh is lying down (wider than tall)
-        # extent = [x, y, z] where y is typically "up"
-        is_horizontal = extent[1] < extent[0] * 0.5 or extent[1] < extent[2] * 0.5
+        # Detect if mesh is lying down (wider than tall). Heuristic only
+        # applies when force_upright is False — buildings are authored Y-up
+        # regardless of footprint shape, so this rotation is wrong for them.
+        is_horizontal = not force_upright and (
+            extent[1] < extent[0] * 0.5 or extent[1] < extent[2] * 0.5
+        )
+
+        # Default render uses 60° FOV (wide). Buildings match the in-game
+        # main camera: 45° downward pitch and 45° FOV (matches GameCamera.cs
+        # minZoomRotation = (45,0,0) and minZoomFOV/maxZoomFOV = 45).
+        fov_deg = 45.0 if force_upright else 60.0
 
         if is_horizontal:
             # Model is lying down - view from +X axis with Z as up
-            # Shows model upright but from the side (best we can do without
-            # knowing the model's intended orientation)
             eye = center + np.array([max_extent * 1.5, 0.1, 0])
             up_vector = np.array([0, 0, 1])
+        elif force_upright:
+            # Building view: 30° downward, more flattering than the game's
+            # 45° main-camera angle when buildings are framed close-up
+            # (the in-game 45° works because the camera is far away).
+            distance = max_extent * 1.6
+            tilt_deg = 30.0
+            sin_t = float(np.sin(np.radians(tilt_deg)))
+            cos_t = float(np.cos(np.radians(tilt_deg)))
+            eye = center + np.array([0.0, distance * sin_t, distance * cos_t])
+            up_vector = np.array([0, 1, 0])
         else:
             # Normal upright model - view from front
             eye = center + np.array([0, 0.1, max_extent * 1.5])
             up_vector = np.array([0, 1, 0])
 
         # Build MVP matrix
-        proj = perspective_matrix(np.radians(60), width / height, 0.01, 100)
+        proj = perspective_matrix(np.radians(fov_deg), width / height, 0.01, 1000)
         view = look_at_matrix(eye, center, up_vector)
         mvp = (proj @ view).T  # Transpose for column-major OpenGL
 

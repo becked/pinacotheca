@@ -9,7 +9,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from pinacotheca.extractor import extract_sprites, extract_unit_meshes
+from pinacotheca.extractor import (
+    extract_composite_meshes,
+    extract_improvement_meshes,
+    extract_sprites,
+    extract_unit_meshes,
+)
 
 
 def main() -> None:
@@ -47,7 +52,7 @@ Examples:
     parser.add_argument(
         "--no-meshes",
         action="store_true",
-        help="Skip 3D mesh extraction (renders unit models to 2D images)",
+        help="Skip 3D mesh extraction (renders unit and building models to 2D images)",
     )
 
     args = parser.parse_args()
@@ -61,6 +66,16 @@ Examples:
 
         if not args.no_meshes:
             extract_unit_meshes(
+                game_data=args.game_data,
+                output_dir=args.output,
+                verbose=not args.quiet,
+            )
+            extract_improvement_meshes(
+                game_data=args.game_data,
+                output_dir=args.output,
+                verbose=not args.quiet,
+            )
+            extract_composite_meshes(
                 game_data=args.game_data,
                 output_dir=args.output,
                 verbose=not args.quiet,

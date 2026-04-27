@@ -10,12 +10,61 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pinacotheca.categories import CATEGORIES, categorize
 
 # Exclusion patterns file (gitignored, contains patterns to skip)
 EXCLUDE_PATTERNS_FILE = Path(__file__).parent.parent.parent / ".exclude-patterns"
+
+# Texture name suffixes that mark a diffuse/albedo (color) texture.
+# Order matters for stripping: longer suffixes first so `_diffuse` is removed
+# before the shorter `_diff` substring would catch.
+DIFFUSE_TEXTURE_SUFFIXES: tuple[str, ...] = (
+    "_diffuse",
+    "_basecolor",
+    "_albedo",
+    "_basemap",
+    "_maintex",
+    "_diff",
+)
+
+
+def build_texture_lookup(env: object) -> dict[str, object]:
+    """
+    Build a normalized-name -> Texture2D object lookup for diffuse textures.
+
+    Recognizes Unity legacy (_Diffuse/_Albedo/_Diff), URP (_BaseMap),
+    HDRP (_BaseColor), and main-texture (_MainTex) suffix conventions.
+    The map key strips all known suffixes so callers can match using the
+    mesh base name.
+
+    Args:
+        env: A loaded UnityPy.Environment
+
+    Returns:
+        Dict mapping the lowercased, suffix-stripped texture name to the
+        original Texture2D object.
+    """
+    lookup: dict[str, object] = {}
+    for obj in env.objects:  # type: ignore[attr-defined]
+        if obj.type.name != "Texture2D":
+            continue
+        try:
+            data = obj.read()
+            name = getattr(data, "m_Name", "")
+        except Exception:
+            continue
+        if not name:
+            continue
+        lower = name.lower()
+        if not any(s in lower for s in DIFFUSE_TEXTURE_SUFFIXES):
+            continue
+        base = lower
+        for suf in DIFFUSE_TEXTURE_SUFFIXES:
+            base = base.replace(suf, "")
+        lookup[base] = obj
+    return lookup
 
 
 def load_exclusion_pattern() -> re.Pattern[str] | None:
@@ -403,12 +452,7 @@ def extract_unit_meshes(
         env = UnityPy.Environment()
         env.load_file(str(game_data / "resources.assets"))
 
-        # Build lookup tables for meshes and textures
-        # Using Any type since UnityPy doesn't have proper type stubs
-        from typing import Any
-
         mesh_lookup: dict[str, Any] = {}
-        texture_lookup: dict[str, Any] = {}
         unreadable = 0
 
         for obj in env.objects:
@@ -418,15 +462,10 @@ def extract_unit_meshes(
                     name = getattr(data, "m_Name", "")
                     if name:
                         mesh_lookup[name] = obj
-                elif obj.type.name == "Texture2D":
-                    data = obj.read()
-                    name = getattr(data, "m_Name", "")
-                    if name and ("diffuse" in name.lower() or "albedo" in name.lower()):
-                        # Store without _Diffuse suffix for easier matching
-                        base_name = name.lower().replace("_diffuse", "").replace("_albedo", "")
-                        texture_lookup[base_name] = obj
             except Exception:
                 unreadable += 1
+
+        texture_lookup: dict[str, Any] = build_texture_lookup(env)
 
         if verbose:
             print(f"Found {len(mesh_lookup)} meshes, {len(texture_lookup)} diffuse textures")
@@ -512,6 +551,519 @@ def extract_unit_meshes(
         if verbose:
             print("\n" + "=" * 60)
             print("3D EXTRACTION COMPLETE")
+            print("=" * 60)
+            print(f"Rendered: {rendered}")
+            if excluded_count > 0:
+                print(f"Excluded by pattern: {excluded_count}")
+            print(f"Skipped: {skipped}")
+            print(f"Output: {sprites_dir}")
+
+        return {"rendered": rendered, "skipped": skipped, "excluded": excluded_count}
+
+    finally:
+        os.chdir(original_cwd)
+
+
+# Curated list of building/improvement meshes to render in 3D.
+# Format: (mesh_name, output_name)
+# Output filenames use the IMPROVEMENT_3D_<NAME>.png pattern so they classify
+# into the existing 'improvements' category alongside 2D improvement icons.
+IMPROVEMENT_MESHES: list[tuple[str, str]] = [
+    # Civic / military buildings (LOD0 high-detail variants)
+    ("Library_LOD0", "LIBRARY"),
+    ("Barracks_LOD0", "BARRACKS"),
+    ("Granary_LOD0", "GRANARY"),
+    ("Hamlet_LOD0", "HAMLET"),
+    ("Village_LOD0", "VILLAGE"),
+    ("Citadel_LOD0", "CITADEL"),
+    ("Garrison_LOD0", "GARRISON"),
+    ("Stronghold_LOD0", "STRONGHOLD"),
+    ("Watermill_LOD0", "WATERMILL"),
+    ("lumbermill_geo_LOD0", "LUMBERMILL"),
+    ("ministry_LOD0", "MINISTRY"),
+    ("odeon_LOD0", "ODEON"),
+    ("range_LOD0", "RANGE"),
+    # Religious - temples & cathedrals & monasteries
+    ("ChristianTemple_LOD0", "CHRISTIAN_TEMPLE"),
+    ("Christian_Cathedral_LOD0", "CHRISTIAN_CATHEDRAL"),
+    ("Christian_Monastery_LOD0", "CHRISTIAN_MONASTERY"),
+    ("Jewish_Temple_LOD0", "JEWISH_TEMPLE"),
+    ("Jewish_Monastery_LOD0", "JEWISH_MONASTERY"),
+    ("Manichean_Temple_LOD0", "MANICHEAN_TEMPLE"),
+    ("Manichean_Cathedral_LOD0", "MANICHEAN_CATHEDRAL"),
+    ("Manichean_Monastery_low_LOD0", "MANICHEAN_MONASTERY"),
+    ("Zoroastrian_Cathedral_LOD0", "ZOROASTRIAN_CATHEDRAL"),
+    ("Zoroastrian_Monastery_LOD0", "ZOROASTRIAN_MONASTERY"),
+    # Religious - shrines
+    ("Fire_Shrine_LOD0", "FIRE_SHRINE"),
+    ("Hunting_Shrine_LOD0", "HUNTING_SHRINE"),
+    ("Healing_Shrine_LOD0", "HEALING_SHRINE"),
+    ("Kingship_Shrine_LOD0", "KINGSHIP_SHRINE"),
+    ("Love_Shrine_LOD0", "LOVE_SHRINE"),
+    ("Sun_Shrine_LOD0", "SUN_SHRINE"),
+    ("Underworld_Shrine_LOD0", "UNDERWORLD_SHRINE"),
+    ("War_Shrine_LOD0", "WAR_SHRINE"),
+    ("WaterShrine_LOD0", "WATER_SHRINE"),
+    ("HearthShrineSoot_LOD0", "HEARTH_SHRINE"),
+    ("wisdomShrine_LOD0", "WISDOM_SHRINE"),
+    # Named non-LOD improvements (the .001-resolver picks bare name first,
+    # then lowest-numbered duplicate). Some of these may be composite prefabs;
+    # if so they will appear exploded until Phase C lands.
+    ("Academy", "ACADEMY"),
+    ("Market", "MARKET"),
+    ("Palace", "PALACE"),
+    ("Coldbaths", "COLDBATHS"),
+    ("Courthouse_low", "COURTHOUSE"),
+    ("Obelisk", "OBELISK"),
+    ("Wall", "WALL"),
+    ("Tower", "TOWER"),
+    ("TheaterPompey", "THEATER_POMPEY"),
+    ("RoyalLibraryRT", "ROYAL_LIBRARY"),
+    # Rural improvements (non-LOD; .001-resolver picks bare name when present).
+    # Some lack clean diffuse textures and will skip.
+    ("Pasture", "PASTURE"),
+    ("Outpost", "OUTPOST"),
+    ("Encampmant", "ENCAMPMENT"),  # game asset retains misspelling
+    ("QuarryStone", "QUARRY"),
+    ("Mine-unique04", "MINE"),
+    ("BrickPile", "BRICKWORKS"),
+]
+
+
+def _resolve_mesh_variant(
+    mesh_lookup: dict[str, Any],
+    base: str,
+) -> str | None:
+    """
+    Resolve a curated mesh name against the actual mesh lookup.
+
+    Picks the bare-named mesh if present; otherwise the lowest-numbered
+    `.001`/`.002` duplicate. Returns the resolved key or None.
+    """
+    if base in mesh_lookup:
+        return base
+    suffixed = sorted(n for n in mesh_lookup if n.startswith(base + "."))
+    return suffixed[0] if suffixed else None
+
+
+def _find_texture(
+    texture_lookup: dict[str, Any],
+    mesh_name: str,
+    output_name: str,
+) -> Any | None:
+    """
+    Find a diffuse texture for a building mesh.
+
+    Tries several name normalizations against the suffix-stripped texture
+    lookup. Returns the Texture2D object or None.
+    """
+    base = re.sub(r"_LOD\d+$", "", mesh_name, flags=re.IGNORECASE).lower().strip()
+    fully_norm = re.sub(r"[^a-z0-9]", "", base)
+
+    candidates: list[str] = [
+        base,  # 'library' or 'christian_temple'
+        base.replace(" ", "_"),
+        base.replace(" ", ""),
+        fully_norm,  # 'christiantemple', for cross-underscore matches
+        output_name.lower(),
+    ]
+
+    seen: set[str] = set()
+    for cand in candidates:
+        if not cand or cand in seen:
+            continue
+        seen.add(cand)
+        if cand in texture_lookup:
+            return texture_lookup[cand]
+        for tex_key, tex_obj in texture_lookup.items():
+            tex_norm = re.sub(r"[^a-z0-9]", "", tex_key)
+            if cand == tex_norm or (cand and cand in tex_norm) or (tex_norm and tex_norm in cand):
+                return tex_obj
+    return None
+
+
+def extract_improvement_meshes(
+    game_data: Path | None = None,
+    output_dir: Path | None = None,
+    *,
+    verbose: bool = True,
+) -> dict[str, int]:
+    """
+    Extract 3D improvement (building) meshes and render them to 2D images.
+
+    Runs after unit-mesh extraction. Output files are named
+    IMPROVEMENT_3D_{name}.png in extracted/sprites/improvements/, where
+    they classify into the existing 'improvements' category alongside the
+    2D improvement icons.
+
+    Args:
+        game_data: Path to game's Data directory (auto-detected if None)
+        output_dir: Where to save rendered images (defaults to ./extracted)
+        verbose: Print progress messages
+
+    Returns:
+        Dict with 'rendered', 'skipped', and 'excluded' counts
+
+    Raises:
+        FileNotFoundError: If game data directory not found
+    """
+    try:
+        import UnityPy
+    except ImportError:
+        print("ERROR: UnityPy not installed", file=sys.stderr)
+        raise
+
+    try:
+        from pinacotheca.renderer import render_mesh_to_image
+    except ImportError as e:
+        if verbose:
+            print(f"WARNING: 3D rendering not available ({e})", file=sys.stderr)
+            print(
+                "Skipping improvement extraction. Install moderngl for 3D support.",
+                file=sys.stderr,
+            )
+        return {"rendered": 0, "skipped": 0, "excluded": 0}
+
+    if game_data is None:
+        game_data = find_game_data()
+    if game_data is None or not game_data.exists():
+        raise FileNotFoundError("Could not find Old World game data!")
+
+    if output_dir is None:
+        output_dir = Path.cwd() / "extracted"
+
+    sprites_dir = output_dir / "sprites" / "improvements"
+    sprites_dir.mkdir(parents=True, exist_ok=True)
+
+    if verbose:
+        print("\n" + "=" * 60)
+        print("3D Improvement Mesh Extraction")
+        print("=" * 60)
+
+    exclude_pattern = load_exclusion_pattern()
+    excluded_count = 0
+
+    original_cwd = os.getcwd()
+    os.chdir(str(game_data))
+
+    try:
+        if verbose:
+            if exclude_pattern:
+                print("Exclusion patterns loaded from .exclude-patterns")
+            print("Loading assets...")
+
+        env = UnityPy.Environment()
+        env.load_file(str(game_data / "resources.assets"))
+
+        mesh_lookup: dict[str, Any] = {}
+        unreadable = 0
+
+        for obj in env.objects:
+            try:
+                if obj.type.name == "Mesh":
+                    data = obj.read()
+                    name = getattr(data, "m_Name", "")
+                    if name:
+                        mesh_lookup[name] = obj
+            except Exception:
+                unreadable += 1
+
+        texture_lookup = build_texture_lookup(env)
+
+        if verbose:
+            print(f"Found {len(mesh_lookup)} meshes, {len(texture_lookup)} diffuse textures")
+            if unreadable:
+                print(f"Skipped {unreadable} unreadable objects")
+            print(f"Processing {len(IMPROVEMENT_MESHES)} improvement meshes...\n")
+
+        rendered = 0
+        skipped = 0
+
+        from pinacotheca.prefab import (
+            bake_to_obj,
+            find_diffuse_for_prefab,
+            find_root_gameobject,
+            walk_prefab,
+        )
+
+        for mesh_name, output_name in IMPROVEMENT_MESHES:
+            if exclude_pattern and exclude_pattern.search(output_name):
+                excluded_count += 1
+                if verbose:
+                    print(f"  [EXCLUDED] {output_name}")
+                continue
+
+            out_path = sprites_dir / f"IMPROVEMENT_3D_{output_name}.png"
+            if out_path.exists():
+                if verbose:
+                    print(f"  [EXISTS] {output_name}")
+                continue
+
+            # Prefer the prefab walker so we apply the building's authored
+            # root rotation/scale (most building meshes are laid flat in
+            # mesh space and only stand up correctly via the prefab's TRS).
+            prefab_base = re.sub(r"_LOD\d+$", "", mesh_name, flags=re.IGNORECASE)
+            root_go = find_root_gameobject(env, prefab_base)
+            rendered_via_prefab = False
+            if root_go is not None:
+                parts = walk_prefab(root_go)
+                # Drop lower-LOD duplicates and Plane meshes. The Planes
+                # in these prefabs are city-block tile textures with the
+                # building's own visual painted into them — including
+                # them creates duplicates and city-context clutter at
+                # our close-up rendering angle.
+                kept = []
+                for p in parts:
+                    try:
+                        m = p.mesh_obj.deref_parse_as_object()
+                        n = getattr(m, "m_Name", "")
+                    except Exception:
+                        continue
+                    if not n or n == "Plane":
+                        continue
+                    if re.search(r"_LOD[12]$", n, flags=re.IGNORECASE):
+                        continue
+                    kept.append(p)
+                if kept:
+                    obj_str = bake_to_obj(kept)
+                    tex_img = find_diffuse_for_prefab(kept) or None
+                    # Fall back to the lookup-table texture if the prefab's
+                    # materials don't expose one we can read.
+                    if tex_img is None:
+                        tex_obj_fallback = _find_texture(texture_lookup, mesh_name, output_name)
+                        if tex_obj_fallback is not None:
+                            try:
+                                tex_img = tex_obj_fallback.read().image
+                            except Exception:
+                                tex_img = None
+                    if obj_str and tex_img is not None:
+                        try:
+                            img = render_mesh_to_image(obj_str, tex_img, force_upright=True)
+                            img.save(out_path, optimize=False)
+                            rendered += 1
+                            rendered_via_prefab = True
+                            if verbose:
+                                print(f"  [OK] {output_name} (prefab, {len(kept)} parts)")
+                            del img
+                            del tex_img
+                            gc.collect()
+                        except Exception as e:
+                            if verbose:
+                                print(f"  [WARN] {output_name} prefab render failed: {e}")
+
+            if rendered_via_prefab:
+                continue
+
+            # Fallback: render the raw mesh asset (no prefab transform).
+            resolved = _resolve_mesh_variant(mesh_lookup, mesh_name)
+            if resolved is None:
+                if verbose:
+                    print(f"  [SKIP] {output_name} - mesh not found ({mesh_name})")
+                skipped += 1
+                continue
+
+            texture_obj = _find_texture(texture_lookup, mesh_name, output_name)
+            if texture_obj is None:
+                if verbose:
+                    print(f"  [SKIP] {output_name} - texture not found")
+                skipped += 1
+                continue
+
+            try:
+                mesh_data = mesh_lookup[resolved].read()
+                obj_data = mesh_data.export()
+                tex_data = texture_obj.read()
+                texture_image = tex_data.image
+
+                if obj_data and texture_image:
+                    img = render_mesh_to_image(obj_data, texture_image, force_upright=True)
+                    img.save(out_path, optimize=False)
+                    rendered += 1
+                    if verbose:
+                        print(f"  [OK] {output_name} (raw mesh)")
+
+                    del img
+                    del texture_image
+
+                gc.collect()
+
+            except Exception as e:
+                if verbose:
+                    print(f"  [ERROR] {output_name} - {e}")
+                skipped += 1
+
+        if verbose:
+            print("\n" + "=" * 60)
+            print("3D IMPROVEMENT EXTRACTION COMPLETE")
+            print("=" * 60)
+            print(f"Rendered: {rendered}")
+            if excluded_count > 0:
+                print(f"Excluded by pattern: {excluded_count}")
+            print(f"Skipped: {skipped}")
+            print(f"Output: {sprites_dir}")
+
+        return {"rendered": rendered, "skipped": skipped, "excluded": excluded_count}
+
+    finally:
+        os.chdir(original_cwd)
+
+
+# Curated list of composite (multi-piece prefab) buildings.
+# Format: (root_gameobject_name, output_name)
+# These buildings are stored as Unity prefab trees rather than single
+# combined meshes. Rendered via the prefab walker in `prefab.py`.
+COMPOSITE_PREFABS: list[tuple[str, str]] = [
+    # Empires of the Indus DLC capitals
+    ("Maurya_Capital", "MAURYA_CAPITAL"),
+    ("Tamil_Capital", "TAMIL_CAPITAL"),
+    ("Yuezhi_Capital", "YUEZHI_CAPITAL"),
+    # Aksum capital
+    ("AksumCapitol", "AKSUM_CAPITAL"),
+    # Wonders / landmarks
+    ("Hanging_Garden", "HANGING_GARDEN"),
+    ("Kushite_Pyramid", "KUSHITE_PYRAMID"),
+    ("Ishtar_Gate33", "ISHTAR_GATE"),
+    ("Pyramid_lvl_1", "PYRAMID_LVL_1"),
+    ("Pyramid_lvl_2", "PYRAMID_LVL_2"),
+    ("Pyramid_lvl_3", "PYRAMID_LVL_3"),
+    ("Pyramid_lvl_4", "PYRAMID_LVL_4"),
+]
+
+
+def extract_composite_meshes(
+    game_data: Path | None = None,
+    output_dir: Path | None = None,
+    *,
+    verbose: bool = True,
+) -> dict[str, int]:
+    """
+    Extract composite prefab buildings (multi-piece structures).
+
+    Walks each prefab's GameObject/Transform hierarchy, bakes per-leaf
+    world matrices into vertex positions, and renders the combined OBJ
+    via the existing renderer pipeline. Falls back gracefully when a
+    curated entry turns out to be a regular single mesh.
+
+    Output: extracted/sprites/improvements/IMPROVEMENT_3D_<NAME>.png
+    """
+    try:
+        import UnityPy
+    except ImportError:
+        print("ERROR: UnityPy not installed", file=sys.stderr)
+        raise
+
+    try:
+        from pinacotheca.renderer import render_mesh_to_image
+    except ImportError as e:
+        if verbose:
+            print(f"WARNING: 3D rendering not available ({e})", file=sys.stderr)
+        return {"rendered": 0, "skipped": 0, "excluded": 0}
+
+    from pinacotheca.prefab import (
+        bake_to_obj,
+        find_diffuse_for_prefab,
+        find_root_gameobject,
+        walk_prefab,
+    )
+
+    if game_data is None:
+        game_data = find_game_data()
+    if game_data is None or not game_data.exists():
+        raise FileNotFoundError("Could not find Old World game data!")
+
+    if output_dir is None:
+        output_dir = Path.cwd() / "extracted"
+
+    sprites_dir = output_dir / "sprites" / "improvements"
+    sprites_dir.mkdir(parents=True, exist_ok=True)
+
+    if verbose:
+        print("\n" + "=" * 60)
+        print("3D Composite Prefab Extraction")
+        print("=" * 60)
+
+    exclude_pattern = load_exclusion_pattern()
+    excluded_count = 0
+
+    original_cwd = os.getcwd()
+    os.chdir(str(game_data))
+
+    try:
+        if verbose:
+            print("Loading assets...")
+
+        env = UnityPy.Environment()
+        env.load_file(str(game_data / "resources.assets"))
+
+        if verbose:
+            print(f"Processing {len(COMPOSITE_PREFABS)} composite prefabs...\n")
+
+        rendered = 0
+        skipped = 0
+
+        for root_name, output_name in COMPOSITE_PREFABS:
+            if exclude_pattern and exclude_pattern.search(output_name):
+                excluded_count += 1
+                if verbose:
+                    print(f"  [EXCLUDED] {output_name}")
+                continue
+
+            out_path = sprites_dir / f"IMPROVEMENT_3D_{output_name}.png"
+            if out_path.exists():
+                if verbose:
+                    print(f"  [EXISTS] {output_name}")
+                continue
+
+            root_go = find_root_gameobject(env, root_name)
+            if root_go is None:
+                if verbose:
+                    print(f"  [SKIP] {output_name} - no GameObject named '{root_name}'")
+                skipped += 1
+                continue
+
+            parts = walk_prefab(root_go)
+            if not parts:
+                if verbose:
+                    print(
+                        f"  [SKIP] {output_name} - prefab has no MeshFilter leaves "
+                        "(likely a combined mesh)"
+                    )
+                skipped += 1
+                continue
+
+            try:
+                obj_str = bake_to_obj(parts)
+                texture_image = find_diffuse_for_prefab(parts)
+
+                if not obj_str:
+                    if verbose:
+                        print(f"  [SKIP] {output_name} - empty bake output")
+                    skipped += 1
+                    continue
+                if texture_image is None:
+                    if verbose:
+                        print(f"  [SKIP] {output_name} - no diffuse texture found")
+                    skipped += 1
+                    continue
+
+                img = render_mesh_to_image(obj_str, texture_image, force_upright=True)
+                img.save(out_path, optimize=False)
+                rendered += 1
+                if verbose:
+                    print(f"  [OK] {output_name} ({len(parts)} parts)")
+
+                del img
+                del texture_image
+                gc.collect()
+
+            except Exception as e:
+                if verbose:
+                    print(f"  [ERROR] {output_name} - {e}")
+                skipped += 1
+
+        if verbose:
+            print("\n" + "=" * 60)
+            print("3D COMPOSITE EXTRACTION COMPLETE")
             print("=" * 60)
             print(f"Rendered: {rendered}")
             if excluded_count > 0:
