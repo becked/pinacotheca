@@ -28,6 +28,24 @@ Seven render incorrectly or not at all because their Capital prefab is essential
 
 These prefabs have no actual city geometry. The city you see in-game is composed at runtime from per-nation terrain textures painted onto the terrain mesh via Unity's render-to-texture system. We can't reproduce this in our isolated PNG render without re-implementing a chunk of the game's rendering pipeline.
 
+## Scope: urban tiles too
+
+Urban tiles (the surrounding hex tiles of any city — the city's "sprawl") use the **same** PVT composition pattern. We confirmed by inspecting every `*_Urban` prefab in the asset bundle:
+
+- Aksum, Hittite, Greece, Rome, Persia, Egypt, Carthage, Babylonia, Assyria — every base-game `*_Urban` prefab is one splat plane, identical pattern to the sparse capitals.
+- The three Indian DLC nations (Maurya, Tamil, Yuezhi) don't even have separate urban prefabs — they share a single `India_UrbanTile`, also one splat plane.
+
+The asset team's choice pattern across all city-related geometry:
+
+| Asset class | Approach | We render today? |
+|---|---|---|
+| Improvements (Library, Temple, Bath…) | Baked 3D mesh | Yes — via XML chain |
+| Capitals: 4 DLC + Aksum + Hittite | Baked 3D mesh | Yes |
+| Capitals: 6 base game | PVT runtime composition | No |
+| Urban tiles: every nation | PVT runtime composition | No |
+
+So implementing the PVT renderer (Phases 1-5 below) unlocks **both** missing capitals **and** all urban tile variants in one shot — roughly doubles the value of the future investment. Urban-tile texture references are included in the texture inventory table below; they reuse most of the same nation textures (with `*Urban*` variants).
+
 ## How the game composes them
 
 Four stages, all in `decompiled/Assembly-CSharp/`:
