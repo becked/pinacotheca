@@ -221,8 +221,8 @@ def autocrop_with_padding(
 def render_mesh_to_image(
     obj_data: str,
     texture_image: "Image.Image",
-    width: int = 1024,
-    height: int = 1024,
+    width: int = 2048,
+    height: int = 2048,
     *,
     autocrop: bool = True,
     padding: int = 32,
@@ -277,6 +277,8 @@ def render_mesh_to_image(
         # Load texture (flip vertically for OpenGL)
         tex_img = texture_image.transpose(Image.Transpose.FLIP_TOP_BOTTOM).convert("RGBA")
         texture = ctx.texture(tex_img.size, 4, tex_img.tobytes())
+        texture.build_mipmaps()
+        texture.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
         texture.use()
 
         # Create framebuffer for offscreen rendering
