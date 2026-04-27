@@ -16,7 +16,7 @@ A Python tool for extracting and cataloging sprite assets from **Old World** (th
 
 - Pure Python extraction from Unity asset bundles
 - Automatic categorization of 4000+ sprites into 40+ categories
-- 3D unit mesh rendering to 2D images
+- 3D rendering of units, improvements, and composite prefabs (DLC capitals, wonders) to 2D images
 - Texture atlas generation for map rendering
 - SvelteKit gallery with search, filters, and lightbox viewing
 - Cross-platform support (macOS and Windows)
@@ -134,8 +134,9 @@ pinacotheca/
 ├── src/pinacotheca/
 │   ├── __init__.py       # Package exports (version via importlib.metadata)
 │   ├── categories.py     # Sprite categorization (regex patterns)
-│   ├── extractor.py      # UnityPy extraction logic
-│   ├── renderer.py       # 3D mesh rendering
+│   ├── extractor.py      # UnityPy extraction logic (sprites + 3D meshes)
+│   ├── prefab.py         # GameObject walker, OBJ baker, splat/plinth filters
+│   ├── renderer.py       # moderngl 3D mesh rendering
 │   ├── atlas.py          # Texture atlas generation
 │   ├── gallery.py        # Legacy HTML gallery generator
 │   └── cli.py            # CLI entry points
@@ -147,9 +148,13 @@ pinacotheca/
 │   │   └── routes/       # SvelteKit pages
 │   └── svelte.config.js
 ├── scripts/
-│   └── bump-version.py   # Version bump utility
+│   ├── bump-version.py   # Version bump utility
+│   └── probes/           # Asset investigation scripts
 ├── tests/
-│   └── test_categories.py
+│   ├── test_categories.py
+│   ├── test_atlas.py
+│   └── test_prefab.py
+├── docs/                 # Investigation writeups, feature requests, references
 ├── extracted/            # Output directory (git-ignored)
 │   ├── index.html        # Gallery (built from web/)
 │   └── sprites/          # Categorized sprite images
@@ -166,7 +171,7 @@ Sprites are automatically categorized by name patterns:
 | `portraits` | Character portraits by nation | `ROME_MALE_01`, `EGYPT_LEADER_FEMALE_02` |
 | `units` | Military unit icons | `UNIT_HOPLITE`, `UNIT_LEGION` |
 | `crests` | Nation/family emblems | `CREST_ROME`, `CREST_JULIUS` |
-| `improvements` | City improvements | `IMPROVEMENT_FARM`, `IMPROVEMENT_MINE` |
+| `improvements` | City improvements (2D icons + 3D renders) | `IMPROVEMENT_FARM`, `IMPROVEMENT_3D_LIBRARY`, `IMPROVEMENT_3D_MAURYA_CAPITAL` |
 | `resources` | Resource icons | `RESOURCE_IRON`, `GOOD_WINE` |
 | `techs` | Technology icons | `TECH_IRONWORKING` |
 | ... | 40+ categories total | |
