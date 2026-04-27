@@ -781,8 +781,10 @@ def extract_improvement_meshes(
 
         from pinacotheca.prefab import (
             bake_to_obj,
+            drop_splat_meshes,
             find_diffuse_for_prefab,
             find_root_gameobject,
+            strip_plinth_from_obj,
             walk_prefab,
         )
 
@@ -807,25 +809,27 @@ def extract_improvement_meshes(
             rendered_via_prefab = False
             if root_go is not None:
                 parts = walk_prefab(root_go)
-                # Drop lower-LOD duplicates and Plane meshes. The Planes
-                # in these prefabs are city-block tile textures with the
-                # building's own visual painted into them — including
-                # them creates duplicates and city-context clutter at
-                # our close-up rendering angle.
-                kept = []
+                # Drop lower-LOD duplicates first (we render LOD0 only).
+                lod_kept: list[Any] = []
                 for p in parts:
                     try:
                         m = p.mesh_obj.deref_parse_as_object()
                         n = getattr(m, "m_Name", "")
                     except Exception:
                         continue
-                    if not n or n == "Plane":
+                    if not n:
                         continue
                     if re.search(r"_LOD[12]$", n, flags=re.IGNORECASE):
                         continue
-                    kept.append(p)
+                    lod_kept.append(p)
+                # Then drop splat-shader meshes (heightmaps, alphamaps,
+                # water surfaces) by material name — catches custom-named
+                # offenders like Quad/MarketSplat/HamletFloor that the
+                # previous mesh-name-only filter missed.
+                kept = drop_splat_meshes(lod_kept)
                 if kept:
                     obj_str = bake_to_obj(kept)
+                    obj_str = strip_plinth_from_obj(obj_str)
                     tex_img = find_diffuse_for_prefab(kept) or None
                     # Fall back to the lookup-table texture if the prefab's
                     # materials don't expose one we can read.
@@ -876,6 +880,7 @@ def extract_improvement_meshes(
                 texture_image = tex_data.image
 
                 if obj_data and texture_image:
+                    obj_data = strip_plinth_from_obj(obj_data)
                     img = render_mesh_to_image(obj_data, texture_image, force_upright=True)
                     img.save(out_path, optimize=False)
                     rendered += 1
@@ -961,8 +966,10 @@ def extract_composite_meshes(
 
     from pinacotheca.prefab import (
         bake_to_obj,
+        drop_splat_meshes,
         find_diffuse_for_prefab,
         find_root_gameobject,
+        strip_plinth_from_obj,
         walk_prefab,
     )
 
@@ -1022,6 +1029,12 @@ def extract_composite_meshes(
                 continue
 
             parts = walk_prefab(root_go)
+            # Drop splat-shader meshes (heightmap/alphamap/water surfaces).
+            # Composite prefabs ship a courtyard floor + heightmap + clutter
+            # mask alongside the actual building geometry; rendering the
+            # splat planes with a standard shader produces alphamap "floor"
+            # artifacts under the building.
+            parts = drop_splat_meshes(parts)
             if not parts:
                 if verbose:
                     print(
@@ -1033,6 +1046,7 @@ def extract_composite_meshes(
 
             try:
                 obj_str = bake_to_obj(parts)
+                obj_str = strip_plinth_from_obj(obj_str)
                 texture_image = find_diffuse_for_prefab(parts)
 
                 if not obj_str:

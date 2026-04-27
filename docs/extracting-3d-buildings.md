@@ -92,7 +92,7 @@ The composite prefabs (Maurya, Tamil, etc.) ship their own ground textures — `
 
 ### Why we can't use the prefab's `Plane` meshes for ground
 
-Each improvement prefab includes 3–7 `Plane` meshes positioned around the building. They look like obvious "ground tiles" but are unusable as direct color sources:
+Each improvement prefab includes 3–7 `Plane` meshes positioned around the building. They look like obvious "ground tiles" but are unusable as direct color sources. **These are now filtered out** by `drop_splat_meshes()` in `prefab.py`, which matches on material name (`Splat*` prefix or exact `WaterNoFoam`) rather than mesh name — catching custom-named offenders like `Quad`, `MarketSplat`, `HamletFloor`, and `Maurya_PVT_Plane` that the older mesh-name-only filter missed.
 
 | Mesh | Material | Texture |
 |---|---|---|
@@ -119,7 +119,7 @@ Up close in our render, neither is true.
 3. **Reimplement the splat shader** to render the prefab's own Plane meshes correctly. Most faithful, most work.
 4. **Leave as-is.** Inconsistent but each individual render is correct, and matches the asset author's intent.
 
-We chose option 4 for now. Option 2 is the most likely follow-up.
+**Currently implemented: option 1.** `strip_plinth_from_obj()` in `prefab.py` runs as a post-process on the baked OBJ before rendering. It detects a plinth via the bottom-5%-of-vertical-extent heuristic above (≥ 80% XZ footprint coverage = plinth) and drops triangles whose three vertices all sit below the cut height. Faces straddling the cut are kept — the silhouette notch is invisible at hex-tile scale where downstream consumers composite the renders. Buildings without a baked plinth (Granary, Watermill etc.) sail through unchanged.
 
 ## File map
 

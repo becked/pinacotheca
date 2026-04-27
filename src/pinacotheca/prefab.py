@@ -399,3 +399,206 @@ def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
 
     return best_image  # type: ignore[no-any-return]
 
+
+# Material name patterns identifying Old World's terrain splat-shader meshes.
+# These are heightmap/alphamap/water surfaces blended at runtime by a custom
+# shader; rendered with a standard textured-mesh shader they produce
+# scrambled-hieroglyph artifacts where the alphamap encodes the building's
+# own footprint. See docs/extracting-3d-buildings.md for the full story.
+SPLAT_MATERIAL_PREFIXES: tuple[str, ...] = ("Splat",)
+SPLAT_MATERIAL_EXACT: tuple[str, ...] = ("WaterNoFoam",)
+
+
+def _is_splat_material_name(name: str) -> bool:
+    if not name:
+        return False
+    if name in SPLAT_MATERIAL_EXACT:
+        return True
+    return any(name.startswith(p) for p in SPLAT_MATERIAL_PREFIXES)
+
+
+def drop_splat_meshes(parts: list[PrefabPart]) -> list[PrefabPart]:
+    """
+    Filter PrefabParts whose first material is a splat-shader material.
+
+    Catches `SplatHeightDefault`, `SplatTextureDefaultPVT`,
+    `SplatClutterDefault`, and `WaterNoFoam` regardless of mesh name.
+    Replaces the older mesh-name-only filter (`mesh.name == "Plane"`) which
+    leaked custom-named splat meshes (`Quad`, `MarketSplat`, `HamletFloor`,
+    `Maurya_PVT_Plane`, etc.).
+
+    Defensive: if the filter would drop every part of a non-empty input,
+    returns the original list unchanged. None of the curated assets trigger
+    this today; it's cheap insurance against future asset shape changes.
+    """
+    kept: list[PrefabPart] = []
+    for part in parts:
+        is_splat = False
+        for mat_pptr in part.materials:
+            try:
+                if not bool(mat_pptr):
+                    continue
+                mat = mat_pptr.deref_parse_as_object()
+                mat_name = getattr(mat, "m_Name", "") or ""
+            except Exception:
+                continue
+            if _is_splat_material_name(mat_name):
+                is_splat = True
+                break
+        if not is_splat:
+            kept.append(part)
+
+    if parts and not kept:
+        return parts
+    return kept
+
+
+def _parse_obj_vertices_and_faces(
+    obj_str: str,
+) -> tuple[list[tuple[float, float, float]], list[list[int]]]:
+    """
+    Lightweight OBJ parse used by `strip_plinth_from_obj`.
+
+    Returns (vertices, faces_as_v_indices). Faces use 0-based vertex
+    indices. UVs and normals are ignored — we only need vertex Y for the
+    plinth-detection geometry and vertex indices to filter face lines.
+    """
+    vertices: list[tuple[float, float, float]] = []
+    faces: list[list[int]] = []
+    for line in obj_str.split("\n"):
+        parts = line.strip().split()
+        if not parts:
+            continue
+        if parts[0] == "v" and len(parts) >= 4:
+            vertices.append((float(parts[1]), float(parts[2]), float(parts[3])))
+        elif parts[0] == "f":
+            face_idx: list[int] = []
+            for token in parts[1:]:
+                vidx_str = token.split("/")[0]
+                if not vidx_str:
+                    continue
+                # OBJ is 1-indexed; convert to 0-indexed.
+                face_idx.append(int(vidx_str) - 1)
+            if len(face_idx) >= 3:
+                faces.append(face_idx)
+    return vertices, faces
+
+
+def strip_plinth_from_obj(
+    obj_str: str,
+    *,
+    footprint_threshold: float = 0.80,
+    extent_fraction: float = 0.05,
+    density_threshold: float = 0.05,
+    max_cut_fraction: float = 0.50,
+    n_bins: int = 20,
+) -> str:
+    """
+    Drop a baked-in plinth slab from an OBJ string.
+
+    Some single-piece improvement meshes (Library, etc.) ship with a stone
+    foundation slab as part of the mesh. Downstream consumers compositing
+    our renders onto their own terrain hex layer end up with a visible
+    double-floor effect. This function detects and removes the slab.
+
+    Algorithm:
+        1. **Detect**: bin verts by Y; if the bottom `extent_fraction`
+           slice of Y verts covers ≥ `footprint_threshold` of the full
+           XZ footprint, treat as plinth. Otherwise return unchanged.
+        2. **Find slab top**: bin all verts into `n_bins` Y slices. Walk
+           from the bottom; the first slice with ≥ `density_threshold`
+           of total verts marks where the building proper begins. Cut at
+           that slice's lower Y. Capped at `max_cut_fraction` of total
+           extent so we never cut more than half the building. If no
+           dense bin is found in that range, fall back to the detection
+           cut (5%) — strips the slab's bottom face only, harmless.
+        3. **Clamp + drop**: re-emit OBJ with two changes:
+           - Any vertex with Y < cut_y is clamped to Y = cut_y. This
+             flattens slab side walls (which often span from y_min all
+             the way up to the building base via long triangles) into a
+             near-zero-thickness disc at cut_y.
+             Triangle-drop alone is insufficient for these slabs because
+             their side faces straddle the cut.
+           - Any face whose three original vert Ys were all ≤ cut_y is
+             dropped (slab top + bottom faces). The clamped disc has no
+             surviving floor/ceiling, just the building geometry above.
+
+    Two thresholds are intentional: the slab's geometric extent (often
+    20–30% of total Y) is much larger than the detection window (5%), so
+    the cut height must be discovered dynamically from vertex density
+    rather than fixed at the detection knob. See Library's Y histogram in
+    the per-ankh investigation: 12 verts at the slab's bottom (5%-of-Y
+    bin), then a 30% empty Y region (slab interior), then 860 verts at
+    the building's first floor (45%-of-Y bin) — that 45% mark is the
+    real slab top.
+
+    Operates on Y-up world-space coords (Unity's native axis preserved by
+    UnityPy's MeshExporter and by `bake_to_obj`).
+    """
+    vertices, faces = _parse_obj_vertices_and_faces(obj_str)
+    if not vertices or not faces:
+        return obj_str
+
+    ys = [v[1] for v in vertices]
+    y_min = min(ys)
+    y_max = max(ys)
+    extent = y_max - y_min
+    if extent <= 0:
+        return obj_str
+
+    detect_cut = y_min + extent_fraction * extent
+
+    xs_all = [v[0] for v in vertices]
+    zs_all = [v[2] for v in vertices]
+    full_area = (max(xs_all) - min(xs_all)) * (max(zs_all) - min(zs_all))
+    if full_area <= 0:
+        return obj_str
+
+    bottom_verts = [v for v in vertices if v[1] <= detect_cut]
+    if not bottom_verts:
+        return obj_str
+    bxs = [v[0] for v in bottom_verts]
+    bzs = [v[2] for v in bottom_verts]
+    bottom_area = (max(bxs) - min(bxs)) * (max(bzs) - min(bzs))
+
+    if bottom_area / full_area < footprint_threshold:
+        return obj_str
+
+    # Plinth detected — find the slab's top via vertex density.
+    bin_h = extent / n_bins
+    bins = [0] * n_bins
+    for v in vertices:
+        idx = min(int((v[1] - y_min) / bin_h), n_bins - 1)
+        bins[idx] += 1
+    threshold_count = max(1, int(len(vertices) * density_threshold))
+    max_bin_idx = int(n_bins * max_cut_fraction)
+    cut_y = detect_cut  # fallback if no dense bin found below the cap
+    for i in range(min(max_bin_idx + 1, n_bins)):
+        if bins[i] >= threshold_count:
+            cut_y = y_min + i * bin_h
+            break
+
+    out_lines: list[str] = []
+    for line in obj_str.split("\n"):
+        stripped = line.strip().split()
+        if stripped:
+            if stripped[0] == "v" and len(stripped) >= 4:
+                # Clamp Y to cut_y for sub-cut verts; preserves topology.
+                vy = float(stripped[2])
+                if vy < cut_y:
+                    out_lines.append(
+                        f"v {float(stripped[1]):.9G} {cut_y:.9G} {float(stripped[3]):.9G}"
+                    )
+                    continue
+            elif stripped[0] == "f":
+                face_idx: list[int] = []
+                for token in stripped[1:]:
+                    vidx_str = token.split("/")[0]
+                    if vidx_str:
+                        face_idx.append(int(vidx_str) - 1)
+                if len(face_idx) >= 3 and all(
+                    vertices[i][1] <= cut_y for i in face_idx if 0 <= i < len(vertices)
+                ):
+                    continue
+        out_lines.append(line)
+    return "\n".join(out_lines)
