@@ -1,6 +1,6 @@
 # Missing 3D Improvement Assets (Per-Ankh Map)
 
-Source request: per-ankh's hex map renderer (`scripts/bake-improvements-test.ts`) currently consumes pinacotheca's `IMPROVEMENT_3D_*.png` outputs. As of 2026-04-27, pinacotheca has 67 3D-rendered improvement assets; per-ankh's DB has 179 distinct improvement types in active use across imported saves. This doc lists the gap.
+Source request: per-ankh's hex map renderer (`scripts/bake-improvements-test.ts`) currently consumes pinacotheca's `IMPROVEMENT_3D_*.png` outputs. The original 2026-04-27 snapshot had 67 assets; the XML-driven discovery work (commit `86a99ce`) lifted that to ~112. The full list at the bottom of this doc reflects the original 67 — many of the entries below have since been picked up automatically by canonical-name discovery; audit before treating as authoritative gaps.
 
 Per-ankh's bake script auto-picks up new assets — drop a new PNG into `extracted/sprites/improvements/` and per-ankh's existence-check + tier-down fallback resolves it on the next bake. No coordination needed for individual asset additions.
 

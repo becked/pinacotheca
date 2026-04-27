@@ -42,7 +42,7 @@ IMPROVEMENT_3D_LIBRARY_FAMILY_HERO.png          (Greek-style)
 
 Naming TBD — whatever matches how the game keys them in source. Per-ankh would consume by looking up `(tile.improvement, owner_player.family)` and falling back to the bare `IMPROVEMENT_3D_LIBRARY.png` if no variant exists.
 
-**Investigation hint.** Look in `decompiled/Assembly-CSharp` for how the game picks an improvement mesh at render time — there's likely a switch on family/culture/nation that points at different prefabs or different child GameObjects. Granary may not have variants (it's culturally-neutral); library, monastery, palace, capital almost certainly do. The DLC capitals (Maurya/Tamil/Yuezhi) are already family-specific and `extract_composite_meshes` handles them — same machinery may extend.
+**Investigation hint.** Look in `decompiled/Assembly-CSharp` for how the game picks an improvement mesh at render time — there's likely a switch on family/culture/nation that points at different prefabs or different child GameObjects. Granary may not have variants (it's culturally-neutral); library, monastery, palace, capital almost certainly do. The DLC capitals (Maurya/Tamil/Yuezhi) are already family-specific and the new XML-driven discovery (`asset_index.py:load_capital_assets`) picks them up automatically — same machinery would extend if a per-family XML pattern exists.
 
 ### 3. Splat-shader Plane meshes on composite prefabs (MEDIUM)
 

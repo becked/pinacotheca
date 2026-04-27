@@ -102,19 +102,21 @@ web/                  # SvelteKit gallery (primary web interface)
 
 - **`categories.py`**: Defines `CATEGORIES` dict mapping category names to regex patterns. Patterns are pre-compiled for performance. The `categorize()` function returns the category for a sprite name.
 
-- **`extractor.py`**: Four extraction entry points called in sequence by `pinacotheca`:
+- **`extractor.py`**: Three extraction entry points called in sequence by `pinacotheca`:
   - `extract_sprites()` — 2D sprite extraction (the original 4000+ icon set)
   - `extract_unit_meshes()` — 3D unit mesh renders (`UNIT_3D_*.png`)
-  - `extract_improvement_meshes()` — single-piece building renders driven by curated `IMPROVEMENT_MESHES` list
-  - `extract_composite_meshes()` — multi-piece prefab renders (DLC capitals, wonders) driven by `COMPOSITE_PREFABS` list
+  - `extract_improvement_meshes()` — 3D improvement renders (`IMPROVEMENT_3D_*.png`); discovers the asset list at runtime from the game's XML chain via `asset_index.py`. Includes a small `SUPPLEMENTAL_PREFABS` list for things not in `improvement.xml` (currently only the four pyramid construction stages) and `PREFAB_DECODE_BLACKLIST` for prefabs whose Texture2D decode SIGSEGVs UnityPy.
   - Auto-detects game installation path on macOS and Windows.
+
+- **`asset_index.py`**: Pure-Python parser for the game's XML asset chain (`improvement.xml` → `assetVariation.xml` → `asset.xml`, plus DLC variants). `load_improvement_assets()` returns one `ImprovementAsset` per unique `zIconName` from improvement.xml; `load_capital_assets()` does the same for `ASSET_VARIATION_CITY_*_CAPITAL` entries (which aren't in improvement.xml). No UnityPy dependency.
 
 - **`prefab.py`**: Unity GameObject/Transform tree walker for composite buildings. Key functions:
   - `walk_prefab(root_go)` — recurse the tree, collect MeshFilter leaves with baked world matrices
-  - `bake_to_obj(parts)` — emit a combined OBJ string in OpenGL right-handed space (handles Unity's left-handed Y-up)
+  - `bake_to_obj(parts, *, pre_rotation_y_deg=0.0)` — emit a combined OBJ string in OpenGL right-handed space (handles Unity's left-handed Y-up). The extractor passes 180° to flip authored-facing-`-Z` buildings around so they face our +Z camera.
   - `find_diffuse_for_prefab(parts)` — multi-format texture resolver (HDRP `_BaseColorMap` → URP `_BaseMap` → legacy `_MainTex`)
-  - `drop_splat_meshes(parts)` — filter splat-shader meshes by material name (`Splat*` prefix + `WaterNoFoam` + `BathWater`); replaces older mesh-name-only filter
-  - `strip_plinth_from_obj(obj_str)` — post-process to remove baked stone foundation slabs (Library, etc.) via density-based cut + vertex clamping
+  - `find_ground_y(parts)` — sample the world Y of the prefab's `SplatHeightDefault` plane (the game's true ground line); used as the plinth cut height
+  - `drop_splat_meshes(parts)` — filter splat-shader meshes by material name (`Splat*` / `LakeWater*` prefix + `WaterNoFoam` + `BathWater`); replaces older mesh-name-only filter
+  - `strip_plinth_from_obj(obj_str, *, cut_y_override=None)` — post-process to remove baked stone foundation slabs. Two paths: when `cut_y_override` is provided (typically from `find_ground_y`), cut at that Y with two safety guards (max 65% of extent, max 50% of vertex count); otherwise fall back to a density-based heuristic.
 
 - **`renderer.py`**: `render_mesh_to_image()` with `force_upright=True` for buildings (45° FOV, 30° tilt) and free-camera mode for units. Uses moderngl headless OpenGL.
 
@@ -148,10 +150,11 @@ extracted/
 
 ## Testing
 
-Tests are split across three files (141 tests total):
+Tests are split across four files (165 tests total):
 - `tests/test_categories.py` — categorization regex patterns (~95 tests)
 - `tests/test_atlas.py` — atlas packing logic
-- `tests/test_prefab.py` — prefab math (TRS, normal transform, X-flip, winding) plus splat filter and plinth strip helpers
+- `tests/test_prefab.py` — prefab math (TRS, normal transform, X-flip, winding), splat filter, plinth strip (incl. `cut_y_override` safety guards), `find_ground_y` helpers, `bake_to_obj` `pre_rotation_y_deg` flip
+- `tests/test_asset_index.py` — XML chain parsing (SingleAsset, aiRandomAssets, DLC merge, dedupe by zIconName, capital discovery)
 
 Run with:
 
@@ -217,29 +220,36 @@ The SvelteKit gallery (`web/`) provides:
 
 ## 3D Improvement Extraction
 
-When adding a new improvement render:
+The improvement list is **discovered from the game's XML chain at runtime** — no curated list to maintain. New improvements added by the game (DLC, patches) get extracted automatically. See `docs/improvement-naming-alignment.md` for the design and `docs/extracting-3d-buildings.md` for the splat-Y plinth + camera flip details.
 
-### Files to Update
+### How discovery works
 
-1. **`src/pinacotheca/extractor.py`** — Add a tuple to either:
-   - `IMPROVEMENT_MESHES` for single-piece buildings — `(unity_gameobject_name, output_name)`
-   - `COMPOSITE_PREFABS` for multi-piece prefabs (DLC capitals, wonders) — `(root_gameobject_name, output_name)`
-2. **No web/manifest changes needed** — `web/scripts/generate-manifest.ts` scans the filesystem at build time and picks up new PNGs automatically.
+Three XML files are walked, then per-prefab the asset bundle is queried by GameObject name:
 
-### Naming convention
+```
+improvement.xml    → IMPROVEMENT_X (zIconName) → AssetVariation: ASSET_VARIATION_IMPROVEMENT_X
+assetVariation.xml → ASSET_VARIATION_IMPROVEMENT_X → SingleAsset: ASSET_IMPROVEMENT_X
+asset.xml          → ASSET_IMPROVEMENT_X → zAsset: Prefabs/Improvements/Y
+```
 
-`output_name` should be the canonical `zIconName` from `Reference/XML/Infos/improvement.xml` minus the `IMPROVEMENT_` prefix. Final filename is `IMPROVEMENT_3D_<output_name>.png`.
+Output PNG: `IMPROVEMENT_3D_{zIconName.removeprefix("IMPROVEMENT_")}.png`. The `prefab_name` (last path component, `Y`) is passed to `find_root_gameobject` to walk the prefab.
 
-About half of the existing entries still drift from canonical (e.g., `FIRE_SHRINE` should be `SHRINE_FIRE`, `MINISTRY` is now `MINISTRIES`, `KUSHITE_PYRAMID` should be `KUSH_PYRAMID`). See `docs/improvement-naming-alignment.md` for the planned sweeping rename and the proposal to drop the hand-curated list in favor of XML-driven discovery via `improvement.xml` → `assetVariation.xml` → `asset.xml`.
+`load_capital_assets()` adds nation capitals (which aren't in `improvement.xml`) by scanning `ASSET_VARIATION_CITY_*_CAPITAL` entries in the same chain.
+
+DLC content is loaded from sibling files (`improvement-event.xml`, `assetVariation-eoti.xml`, `asset-btt.xml`, etc.). Missing DLC files are silently skipped; new DLC files just need to be added to the file lists in `asset_index.py`.
+
+### Adding things outside the XML chain
+
+The `SUPPLEMENTAL_PREFABS` list in `extractor.py` is for prefabs not represented in `improvement.xml` (currently only the four pyramid construction stages). Format: `(prefab_root_gameobject_name, output_name)`.
 
 ### Splat-shader filter
 
-Composite prefabs ship with `Plane`/`Quad`/custom-named meshes that use Old World's terrain splat shaders (heightmap, alphamap, water surfaces). Through our standard textured-mesh shader they render as broken colored plates. `drop_splat_meshes()` filters them by material name. If a new prefab introduces a new water-shader material name, add it to `SPLAT_MATERIAL_EXACT` in `prefab.py` (currently `WaterNoFoam`, `BathWater`).
+Prefabs ship with `Plane`/`Quad`/custom-named meshes that use Old World's terrain splat shaders (heightmap, alphamap, water surfaces). Through our standard textured-mesh shader they render as broken colored plates. `drop_splat_meshes()` filters them by material name (matches `Splat*`/`LakeWater*` prefixes + exact `WaterNoFoam`/`BathWater`). If a new prefab introduces a new splat or water material name, add the prefix/exact match to `SPLAT_MATERIAL_PREFIXES` or `SPLAT_MATERIAL_EXACT` in `prefab.py`.
 
-### After adding entries
+### After re-rendering
 
 ```bash
-pinacotheca           # Re-extract; auto-skips existing PNGs unless deleted
+pinacotheca           # Re-extracts; auto-removes stale PNGs whose names don't match the new canonical set
 pinacotheca-web-build # Rebuild manifest if running the SvelteKit gallery
 ```
 
@@ -249,11 +259,15 @@ rm extracted/sprites/improvements/IMPROVEMENT_3D_LIBRARY.png
 pinacotheca
 ```
 
+### What's NOT extracted
+
+7 of 12 nation capitals (Greece, Persia, Rome, Carthage, Babylonia, Assyria, Egypt) and all per-nation urban tiles use runtime PVT (procedural virtual texturing) composition that we can't reproduce in isolated PNG renders without re-implementing a chunk of the game's terrain shader. See `docs/runtime-composed-cities.md` for the full investigation and a phased implementation plan if/when this becomes worth pursuing.
+
 ## Downstream Consumer Contract
 
 The 3D improvement renders are consumed by external tools that scan the filesystem rather than parsing a manifest:
 
-- **per-ankh** (hex-based map renderer) — bakes our `IMPROVEMENT_3D_*.png` outputs into atlases for its map view. Looks up by `(tile.improvement, owner.family)` keyed on the game's canonical `zIconName`. Sees `docs/feature-request-per-ankh-map-atlas.md` for their requirements and `docs/per-ankh-missing-improvements.md` for the gap (we have ~67 of their ~179 in-use improvement types).
+- **per-ankh** (hex-based map renderer) — bakes our `IMPROVEMENT_3D_*.png` outputs into atlases for its map view. Looks up by `(tile.improvement, owner.family)` keyed on the game's canonical `zIconName`. Since the XML-driven discovery work, our filenames now match canonical zIconName directly. See `docs/feature-request-per-ankh-map-atlas.md` for their requirements and `docs/per-ankh-missing-improvements.md` for the gap (we ship ~112 of their ~179 in-use improvement types).
 - **SvelteKit gallery** (`web/`) — `generate-manifest.ts` scans `extracted/sprites/` at build time and emits `manifest.json`. New PNGs auto-appear; no code changes needed.
 
 **API surface**: PNG filenames in `extracted/sprites/improvements/IMPROVEMENT_3D_<NAME>.png`. Renames are breaking changes; coordinate with per-ankh before renaming. The naming-alignment doc proposes a future major version bump that aligns all names to canonical zIconName at once.
