@@ -635,7 +635,7 @@ def extract_improvement_meshes(
             )
         return {"rendered": 0, "skipped": 0, "excluded": 0}
 
-    from pinacotheca.asset_index import load_improvement_assets
+    from pinacotheca.asset_index import load_capital_assets, load_improvement_assets
     from pinacotheca.prefab import (
         bake_to_obj,
         drop_splat_meshes,
@@ -670,10 +670,14 @@ def extract_improvement_meshes(
     if xml_dir is None:
         raise FileNotFoundError(f"Could not locate Reference/XML/Infos starting from {game_data}")
     improvements = load_improvement_assets(xml_dir)
-    # Build the full job list: (prefab_name, output_name) pairs.
+    capitals = load_capital_assets(xml_dir)
+    # Build the full job list: (prefab_name, output_name) pairs. All three
+    # sources flow into the same render path; capitals are added with their
+    # already-prefix-stripped canonical names (MAURYA_CAPITAL etc).
     jobs: list[tuple[str, str]] = [
         (a.prefab_name, a.z_icon_name.removeprefix("IMPROVEMENT_")) for a in improvements
     ]
+    jobs.extend((c.prefab_name, c.z_icon_name) for c in capitals)
     jobs.extend(SUPPLEMENTAL_PREFABS)
 
     # Stale-PNG cleanup: anything not in the new canonical set goes.
@@ -690,8 +694,8 @@ def extract_improvement_meshes(
         print("=" * 60)
         print(f"Loading XML chain from {xml_dir}")
         print(
-            f"Discovered {len(improvements)} improvements via XML, "
-            f"+{len(SUPPLEMENTAL_PREFABS)} supplemental prefabs"
+            f"Discovered {len(improvements)} improvements + {len(capitals)} capitals "
+            f"via XML, +{len(SUPPLEMENTAL_PREFABS)} supplemental prefabs"
         )
         if stale_count:
             print(f"Removed {stale_count} stale PNG(s) from previous extraction")

@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pinacotheca.asset_index import ImprovementAsset, load_improvement_assets
+from pinacotheca.asset_index import (
+    ImprovementAsset,
+    load_capital_assets,
+    load_improvement_assets,
+)
 
 
 def _write(path: Path, content: str) -> None:
@@ -453,4 +457,94 @@ def test_prefab_name_extracted_from_nested_path(tmp_path: Path) -> None:
 def test_missing_xml_dir_returns_empty(tmp_path: Path) -> None:
     """Pointing at a non-existent directory returns [] without crashing."""
     result = load_improvement_assets(tmp_path / "does_not_exist")
+    assert result == []
+
+
+# --- load_capital_assets -----------------------------------------------------
+
+
+def test_capitals_discovered_via_variation_pattern(tmp_path: Path) -> None:
+    """Capitals are discovered by scanning ASSET_VARIATION_CITY_*_CAPITAL
+    entries in assetVariation.xml — they have no improvement.xml row."""
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_CITY_GREECE_CAPITAL</zType>
+                <SingleAsset>ASSET_CITY_GREECE_CAPITAL</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_CITY_GREECE_URBAN</zType>
+                <SingleAsset>ASSET_CITY_GREECE_URBAN</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "assetVariation-eoti.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_CITY_MAURYA_CAPITAL</zType>
+                <SingleAsset>ASSET_CITY_MAURYA_CAPITAL</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_CITY_GREECE_CAPITAL</zType>
+                <zAsset>Prefabs/Cities/Greece/Greece_Capital</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_CITY_GREECE_URBAN</zType>
+                <zAsset>Prefabs/Cities/Greece/Greece_Urban</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset-eoti.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_CITY_MAURYA_CAPITAL</zType>
+                <zAsset>Prefabs/Cities/Maurya/Maurya_Capital</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    result = load_capital_assets(tmp_path)
+    by_canonical = {a.z_icon_name: a.prefab_name for a in result}
+    # Capitals only — no urban tiles, even though _URBAN variation exists.
+    assert by_canonical == {
+        "GREECE_CAPITAL": "Greece_Capital",
+        "MAURYA_CAPITAL": "Maurya_Capital",
+    }
+
+
+def test_capitals_skip_when_asset_missing(tmp_path: Path) -> None:
+    """Variation entry exists but downstream Asset is missing → skipped."""
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_CITY_NOWHERE_CAPITAL</zType>
+                <SingleAsset>ASSET_CITY_NOWHERE_CAPITAL</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(tmp_path / "asset.xml", _wrap(""))
+    result = load_capital_assets(tmp_path)
+    assert result == []
+
+
+def test_capitals_missing_xml_returns_empty(tmp_path: Path) -> None:
+    result = load_capital_assets(tmp_path / "does_not_exist")
     assert result == []

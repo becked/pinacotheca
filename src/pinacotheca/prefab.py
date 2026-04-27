@@ -431,7 +431,7 @@ def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
 # shader; rendered with a standard textured-mesh shader they produce
 # scrambled-hieroglyph artifacts where the alphamap encodes the building's
 # own footprint. See docs/extracting-3d-buildings.md for the full story.
-SPLAT_MATERIAL_PREFIXES: tuple[str, ...] = ("Splat",)
+SPLAT_MATERIAL_PREFIXES: tuple[str, ...] = ("Splat", "LakeWater")
 SPLAT_MATERIAL_EXACT: tuple[str, ...] = ("WaterNoFoam", "BathWater")
 
 # Ground-stamp materials in priority order. SplatHeightDefault is the actual

@@ -206,6 +206,63 @@ def _build_asset_index(entries: list[ET.Element]) -> dict[str, str]:
     return out
 
 
+def load_capital_assets(xml_dir: Path) -> list[ImprovementAsset]:
+    """
+    Discover nation-capital prefabs by scanning the AssetVariation chain.
+
+    Capitals (Maurya_Capital, Greece_Capital, etc.) are CITY assets, not
+    improvements — they don't appear in `improvement.xml` because the game
+    spawns them via `Tile.cs:13029` (`infos.nation(eNation).meUrbanAsset`),
+    not via the improvement renderer.
+
+    To discover them via XML, we scan AssetVariation entries whose zType
+    matches `ASSET_VARIATION_CITY_*_CAPITAL` and resolve them through the
+    same SingleAsset → zAsset chain.
+
+    Returns the same `ImprovementAsset` shape as `load_improvement_assets`
+    (z_type and asset_z_type both refer to the variation/asset zType, since
+    there's no `<zIconName>` field on these). Output filename will be
+    `IMPROVEMENT_3D_<NATION>_CAPITAL.png` (e.g. `..._MAURYA_CAPITAL.png`)
+    matching the historical naming.
+    """
+    if not xml_dir.exists():
+        return []
+
+    variation_entries = _load_entries(xml_dir, ASSET_VARIATION_FILES)
+    variations = _build_variation_index(variation_entries)
+    assets = _build_asset_index(_load_entries(xml_dir, ASSET_FILES))
+
+    out: list[ImprovementAsset] = []
+    for entry in variation_entries:
+        z_type = _entry_text(entry, "zType")
+        if not z_type or not z_type.startswith("ASSET_VARIATION_CITY_"):
+            continue
+        if not z_type.endswith("_CAPITAL"):
+            continue
+        # Re-resolve via the variation index (same single-asset/random logic).
+        variation = variations.get(z_type)
+        if variation is None:
+            continue
+        best_asset_z, best_weight = max(variation.candidates, key=lambda c: c[1])
+        prefab = assets.get(best_asset_z)
+        if not prefab:
+            logger.debug("%s → %s: asset not found", z_type, best_asset_z)
+            continue
+        # Canonical name: strip the ASSET_VARIATION_CITY_ prefix.
+        # ASSET_VARIATION_CITY_MAURYA_CAPITAL → MAURYA_CAPITAL.
+        canonical = z_type.removeprefix("ASSET_VARIATION_CITY_")
+        out.append(
+            ImprovementAsset(
+                z_icon_name=canonical,
+                prefab_name=prefab,
+                z_type=z_type,
+                asset_z_type=best_asset_z,
+                weight=best_weight,
+            )
+        )
+    return out
+
+
 def load_improvement_assets(xml_dir: Path) -> list[ImprovementAsset]:
     """
     Walk the improvement → variation → asset chain across base + DLC XML.
