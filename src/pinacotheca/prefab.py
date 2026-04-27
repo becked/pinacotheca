@@ -1,16 +1,20 @@
 """
-GameObject/Transform prefab traversal for composite buildings.
+GameObject/Transform prefab traversal for improvement renders.
 
-Composite buildings (DLC capitals like Maurya_Capital, wonders like
-Hanging_Garden) are stored as Unity prefabs: a tree of GameObjects with
-Transform components and MeshFilter leaves pointing to multiple sub-meshes.
-Rendering the named Mesh asset alone produces an exploded scatter — the
-sub-mesh vertices are stored in each GameObject's local space and only
+This module is the render path for every 3D improvement we extract:
+single-piece buildings (Library, Granary), multi-piece composites (DLC
+capitals like Maurya_Capital, wonders like Hanging_Garden), supplemental
+prefabs (pyramid construction stages), and nation capitals discovered via
+`load_capital_assets`. Old World stores all of them as Unity prefabs — a
+tree of GameObjects with Transform components and MeshFilter leaves —
+and rendering the named Mesh asset alone produces an exploded scatter,
+because sub-mesh vertices live in each GameObject's local space and only
 assemble correctly when the Transform hierarchy is walked.
 
-This module walks the hierarchy, bakes per-leaf world transforms into
-vertex positions, and emits a combined OBJ string consumable by the
-existing renderer pipeline.
+The module walks the hierarchy, bakes per-leaf world transforms into
+vertex positions, drops splat-shader / water meshes, optionally strips
+a baked-in plinth at the splat-plane Y, and emits a combined OBJ string
+consumable by the existing renderer pipeline.
 
 Coordinate conventions:
     Unity uses left-handed Y-up. All matrix composition here stays in
@@ -287,8 +291,6 @@ def bake_to_obj(parts: list[PrefabPart], *, pre_rotation_y_deg: float = 0.0) -> 
     sb.append("g prefab\n")
 
     v_offset = 0  # cumulative vertex index offset for face references
-    vt_offset = 0
-    vn_offset = 0
 
     for part_idx, part in enumerate(parts):
         try:
@@ -350,14 +352,6 @@ def bake_to_obj(parts: list[PrefabPart], *, pre_rotation_y_deg: float = 0.0) -> 
                     sb.append(f"f {c}/{c}/{c} {b}/{b}/{b} {a}/{a}/{a}\n")
 
         v_offset += len(handler.m_Vertices)
-        if handler.m_UV0:
-            vt_offset += len(handler.m_UV0)
-        if handler.m_Normals:
-            vn_offset += len(handler.m_Normals)
-        # Suppress unused-variable warnings; offsets retained for
-        # future per-channel index arithmetic if needed.
-        _ = vt_offset
-        _ = vn_offset
 
     return "".join(sb)
 
@@ -504,29 +498,8 @@ def _primary_material_name(part: PrefabPart) -> str:
     return ""
 
 
-def _world_y_max(part: PrefabPart) -> float | None:
-    """Return the max world-space Y across a part's vertices, or None on failure."""
-    from UnityPy.helpers.MeshHelper import MeshHandler
-
-    try:
-        mesh = part.mesh_obj.deref_parse_as_object()
-        handler = MeshHandler(mesh)
-        handler.process()  # type: ignore[no-untyped-call]
-    except Exception:
-        return None
-    if handler.m_VertexCount <= 0 or not handler.m_Vertices:
-        return None
-    m = part.world_matrix
-    y_max = -float("inf")
-    for vx, vy, vz in handler.m_Vertices:
-        wy = m[1, 0] * vx + m[1, 1] * vy + m[1, 2] * vz + m[1, 3]
-        if wy > y_max:
-            y_max = float(wy)
-    return y_max if y_max != -float("inf") else None
-
-
-def _world_y_min(part: PrefabPart) -> float | None:
-    """Return the min world-space Y across a part's vertices, or None on failure."""
+def _world_y_extents(part: PrefabPart) -> tuple[float, float] | None:
+    """Return (y_min, y_max) of a part's vertices in world space, or None on failure."""
     from UnityPy.helpers.MeshHelper import MeshHandler
 
     try:
@@ -539,31 +512,36 @@ def _world_y_min(part: PrefabPart) -> float | None:
         return None
     m = part.world_matrix
     y_min = float("inf")
+    y_max = -float("inf")
     for vx, vy, vz in handler.m_Vertices:
         wy = m[1, 0] * vx + m[1, 1] * vy + m[1, 2] * vz + m[1, 3]
         if wy < y_min:
             y_min = float(wy)
-    return y_min if y_min != float("inf") else None
+        if wy > y_max:
+            y_max = float(wy)
+    if y_min == float("inf"):
+        return None
+    return (y_min, y_max)
 
 
 def find_geometry_y_min(parts: list[PrefabPart]) -> float | None:
     """
     Return the minimum world Y across non-splat parts, or None.
 
-    Used to sanity-check splat-plane Y in composite prefabs: if the
-    splat plane sits well above the building's actual lowest geometry,
-    it's likely on a terrace (e.g., Hanging_Garden) rather than at the
-    true ground line, and the splat-Y should not be used as a plinth
-    cut. Helper for that comparison.
+    Used to sanity-check splat-plane Y: if the splat plane sits well
+    above the building's actual lowest geometry, it's likely on a
+    terrace (e.g., Hanging_Garden) rather than at the true ground line,
+    and the splat-Y should not be used as a plinth cut. Helper for that
+    comparison.
     """
     y_mins: list[float] = []
     for part in parts:
         name = _primary_material_name(part)
         if _is_splat_material_name(name):
             continue
-        y = _world_y_min(part)
-        if y is not None:
-            y_mins.append(y)
+        ext = _world_y_extents(part)
+        if ext is not None:
+            y_mins.append(ext[0])
     return min(y_mins) if y_mins else None
 
 
@@ -595,13 +573,13 @@ def find_ground_y(parts: list[PrefabPart]) -> float | None:
         if name in WATER_MATERIALS:
             continue
         if name in GROUND_HEIGHT_MATERIALS:
-            y = _world_y_max(part)
-            if y is not None:
-                height_ys.append(y)
+            ext = _world_y_extents(part)
+            if ext is not None:
+                height_ys.append(ext[1])
         elif name in GROUND_TERRAIN_MATERIALS:
-            y = _world_y_max(part)
-            if y is not None:
-                terrain_ys.append(y)
+            ext = _world_y_extents(part)
+            if ext is not None:
+                terrain_ys.append(ext[1])
     if height_ys:
         return max(height_ys)
     if terrain_ys:

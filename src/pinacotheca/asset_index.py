@@ -228,20 +228,12 @@ def load_capital_assets(xml_dir: Path) -> list[ImprovementAsset]:
     if not xml_dir.exists():
         return []
 
-    variation_entries = _load_entries(xml_dir, ASSET_VARIATION_FILES)
-    variations = _build_variation_index(variation_entries)
+    variations = _build_variation_index(_load_entries(xml_dir, ASSET_VARIATION_FILES))
     assets = _build_asset_index(_load_entries(xml_dir, ASSET_FILES))
 
     out: list[ImprovementAsset] = []
-    for entry in variation_entries:
-        z_type = _entry_text(entry, "zType")
-        if not z_type or not z_type.startswith("ASSET_VARIATION_CITY_"):
-            continue
-        if not z_type.endswith("_CAPITAL"):
-            continue
-        # Re-resolve via the variation index (same single-asset/random logic).
-        variation = variations.get(z_type)
-        if variation is None:
+    for z_type, variation in variations.items():
+        if not z_type.startswith("ASSET_VARIATION_CITY_") or not z_type.endswith("_CAPITAL"):
             continue
         best_asset_z, best_weight = max(variation.candidates, key=lambda c: c[1])
         prefab = assets.get(best_asset_z)

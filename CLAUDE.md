@@ -67,7 +67,7 @@ python scripts/bump-version.py 1.2.0
 src/pinacotheca/
 ├── __init__.py       # Package exports
 ├── categories.py     # Sprite categorization (regex patterns, pre-compiled)
-├── extractor.py      # UnityPy extraction (sprites, units, improvements, composites)
+├── extractor.py      # UnityPy extraction (sprites, units, improvements)
 ├── prefab.py         # GameObject/Transform walker, OBJ baker, splat/plinth filters
 ├── renderer.py       # moderngl 3D mesh rendering with building/unit cameras
 ├── atlas.py          # Texture atlas generation
@@ -81,7 +81,8 @@ docs/                 # Investigation writeups, feature requests, references
 ├── atlas-reference.md
 ├── improvement-naming-alignment.md       # Canonical zIconName follow-up effort
 ├── feature-request-per-ankh-map-atlas.md # Downstream consumer requirements
-└── per-ankh-missing-improvements.md      # Gap tracking
+├── per-ankh-missing-improvements.md      # Gap tracking
+└── runtime-composed-cities.md            # Why 7 capitals + urban tiles aren't extractable as PNG
 
 web/                  # SvelteKit gallery (primary web interface)
 ├── scripts/
@@ -110,7 +111,7 @@ web/                  # SvelteKit gallery (primary web interface)
 
 - **`asset_index.py`**: Pure-Python parser for the game's XML asset chain (`improvement.xml` → `assetVariation.xml` → `asset.xml`, plus DLC variants). `load_improvement_assets()` returns one `ImprovementAsset` per unique `zIconName` from improvement.xml; `load_capital_assets()` does the same for `ASSET_VARIATION_CITY_*_CAPITAL` entries (which aren't in improvement.xml). No UnityPy dependency.
 
-- **`prefab.py`**: Unity GameObject/Transform tree walker for composite buildings. Key functions:
+- **`prefab.py`**: Unity GameObject/Transform tree walker. Key functions:
   - `walk_prefab(root_go)` — recurse the tree, collect MeshFilter leaves with baked world matrices
   - `bake_to_obj(parts, *, pre_rotation_y_deg=0.0)` — emit a combined OBJ string in OpenGL right-handed space (handles Unity's left-handed Y-up). The extractor passes 180° to flip authored-facing-`-Z` buildings around so they face our +Z camera.
   - `find_diffuse_for_prefab(parts)` — multi-format texture resolver (HDRP `_BaseColorMap` → URP `_BaseMap` → legacy `_MainTex`)

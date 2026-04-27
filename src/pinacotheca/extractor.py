@@ -758,8 +758,7 @@ def extract_improvement_meshes(
             # line — preferred over the density heuristic. None when the
             # prefab has no ground stamp; strip_plinth_from_obj then falls
             # back to its density heuristic.
-            splat_y = find_ground_y(lod_kept)
-            cut_y_override = max(0.0, splat_y) if splat_y is not None else None
+            cut_y_override = find_ground_y(lod_kept)
             # Drop splat-shader meshes (heightmaps, alphamaps, water surfaces)
             # by material name.
             kept = drop_splat_meshes(lod_kept)

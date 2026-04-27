@@ -127,7 +127,7 @@ Result: ground beneath a Greek city has Greek mosaic patterns visible from any v
 
 ## Texture inventory per nation
 
-Pull names — these are the textures attached to each nation's `TerrainTexturePVTSplat` components. To enumerate yourself: look in `resources.assets` for textures whose names contain the nation name. (See `scripts/inspect_splat_y.py` for the loading boilerplate.)
+Pull names — these are the textures attached to each nation's `TerrainTexturePVTSplat` components. To enumerate yourself: look in `resources.assets` for textures whose names contain the nation name. (See `extract_improvement_meshes` in `src/pinacotheca/extractor.py` for the UnityPy `Environment.load_file` + `os.chdir` bootstrap pattern.)
 
 | Nation | Albedo | Height | Normal | Metallic/Roughness | Alphamap (footprint mask) |
 |---|---|---|---|---|---|

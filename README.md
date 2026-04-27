@@ -16,7 +16,7 @@ A Python tool for extracting and cataloging sprite assets from **Old World** (th
 
 - Pure Python extraction from Unity asset bundles
 - Automatic categorization of 4000+ sprites into 40+ categories
-- 3D rendering of units, improvements, and composite prefabs (DLC capitals, wonders) to 2D images
+- 3D rendering of units, improvements, and nation capitals to 2D images
 - Texture atlas generation for map rendering
 - SvelteKit gallery with search, filters, and lightbox viewing
 - Cross-platform support (macOS and Windows)
@@ -153,7 +153,8 @@ pinacotheca/
 ├── tests/
 │   ├── test_categories.py
 │   ├── test_atlas.py
-│   └── test_prefab.py
+│   ├── test_prefab.py
+│   └── test_asset_index.py
 ├── docs/                 # Investigation writeups, feature requests, references
 ├── extracted/            # Output directory (git-ignored)
 │   ├── index.html        # Gallery (built from web/)

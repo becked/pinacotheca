@@ -164,7 +164,6 @@ A small `PREFAB_DECODE_BLACKLIST` constant in `extractor.py` skips prefabs whose
 - `tests/test_asset_index.py` — synthetic-XML tests for the chain (SingleAsset, aiRandomAssets, DLC merge, dedupe-by-zIconName, broken-chain skipping).
 - `tests/test_prefab.py` — synthetic unit tests for the prefab math (quaternion → matrix, TRS chain, normal transform under non-uniform scale, X-flip-once, winding flip on negative scale, splat-Y helpers, `cut_y_override` safety guards, `pre_rotation_y_deg` Z-flip).
 - `scripts/probes/` — exploration scripts used during the investigation (mesh enumerator, texture finder, prefab inspector). Not required at runtime.
-- `scripts/inspect_splat_y.py` — diagnostic that compares splat-plane Y to building first-dense-bin Y. Useful for auditing new entries or DLC content.
 
 ## Reference: game source files
 
