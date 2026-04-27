@@ -10,7 +10,6 @@ import sys
 from pathlib import Path
 
 from pinacotheca.extractor import (
-    extract_composite_meshes,
     extract_improvement_meshes,
     extract_sprites,
     extract_unit_meshes,
@@ -71,11 +70,6 @@ Examples:
                 verbose=not args.quiet,
             )
             extract_improvement_meshes(
-                game_data=args.game_data,
-                output_dir=args.output,
-                verbose=not args.quiet,
-            )
-            extract_composite_meshes(
                 game_data=args.game_data,
                 output_dir=args.output,
                 verbose=not args.quiet,

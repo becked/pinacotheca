@@ -119,15 +119,52 @@ Up close in our render, neither is true.
 3. **Reimplement the splat shader** to render the prefab's own Plane meshes correctly. Most faithful, most work.
 4. **Leave as-is.** Inconsistent but each individual render is correct, and matches the asset author's intent.
 
-**Currently implemented: option 1.** `strip_plinth_from_obj()` in `prefab.py` runs as a post-process on the baked OBJ before rendering. It detects a plinth via the bottom-5%-of-vertical-extent heuristic above (≥ 80% XZ footprint coverage = plinth) and drops triangles whose three vertices all sit below the cut height. Faces straddling the cut are kept — the silhouette notch is invisible at hex-tile scale where downstream consumers composite the renders. Buildings without a baked plinth (Granary, Watermill etc.) sail through unchanged.
+**Currently implemented: option 1, with two paths to the cut height.** `strip_plinth_from_obj()` in `prefab.py` runs as a post-process on the baked OBJ before rendering.
+
+**Path 1 (preferred): splat-plane Y as ground truth.** This is the same Y the game uses to deform terrain UP around the building — the prefab already encodes its ground line via the embedded `SplatHeightDefault` plane. `find_ground_y(parts)` reads the max world Y of the prefab's `SplatHeightDefault` plane (or fallback `SplatClutterDefault`/`SplatTextureDefaultPVT`); the extractor passes that to `strip_plinth_from_obj` as `cut_y_override`. About 25 of 56 single-piece improvements ship with splat planes — for those, splat-Y matches the building's actual floor within ±0.10 in 14 cases and is correct (vs. the heuristic over-cutting) in the disagreements. CITADEL, STRONGHOLD, AMPHITHEATER were all dramatically over-cut by the heuristic; splat-Y fixed them.
+
+Two safety guards refuse a bad override and fall back to Path 2: (a) override exceeds `max_cut_fraction` (0.65) of the model's Y extent; (b) clamping the override would affect ≥50% of vertices. The latter catches edge-case authoring like WALL (whose entire mesh lies below Y=0) and BRICKWORKS (entirely above Y=2).
+
+**Path 2 (fallback): bottom-5%-of-vertical-extent heuristic.** When no override is provided (no splat plane in the prefab; ~22 of 56 entries) or both safety guards refuse, the original heuristic runs: ≥80% XZ footprint coverage at the bottom 5% of Y = plinth; find slab top via vertex-density binning capped at `max_cut_fraction` extent; clamp sub-cut verts up to `cut_y` and drop faces whose three verts are all sub-cut. This is what handles religious buildings (cathedrals, monasteries, shrines) that ship without splat planes.
+
+**Both paths share the clamp+drop emission.** Triangles straddling the cut are kept but their bottom verts are clamped to `cut_y`, flattening slab walls into a thin disc. The silhouette notch is invisible at hex-tile scale where downstream consumers composite the renders. Buildings without any plinth pattern sail through unchanged.
+
+### How the game itself does it
+
+The decompiled `TerrainTextureRenderer.cs:1591` (`RenderHeightSplats`) shows the in-game mechanism: an orthographic camera renders the `TerrainHeightSplat` layer (where every prefab's `SplatHeightDefault` plane lives) into a global heightmap that **deforms the terrain mesh UP around buildings**. The building's plinth bottom (Y ≈ -1 to -2 in prefab local space) ends up below the now-raised terrain mesh, hidden by Z-buffer. The game doesn't hide anything — it submerges the plinth.
+
+Our isolated renders have no terrain to submerge into, so the ground stamp's Y becomes our cut line: anything below is what the in-game terrain would have hidden.
+
+## Camera orientation: the 180° flip
+
+The in-game world camera (`GameCamera.cs:54`, Euler `(45, 0, 0)`) sits south of its target and views the **-Z face** of buildings. By Unity convention an object's `transform.forward = +Z`, but Old World assets are authored with their **front facing -Z** so the in-game camera sees the entrance/decorated side.
+
+Our renderer puts the OpenGL camera at OBJ +Z (`renderer.py:319`). Without compensation, every building shows its back. Flipping the camera to OBJ -Z would also mirror left/right (because the camera's local right vector reverses), which is the wrong fix.
+
+The chosen fix is in `bake_to_obj`: an optional `pre_rotation_y_deg` (default 0° to keep the function reusable; the extractor passes 180°). It pre-multiplies a 4×4 Y rotation onto each part's world matrix. Y rotation is a proper rotation (`det = +1`) so the existing `flip_winding` logic for negative-scale parts is unaffected. Vertices and normals both flow through the same composed matrix, so the rotation applies uniformly.
+
+No per-asset rotation overrides are needed. Earlier work added a `IMPROVEMENT_ROTATION_OVERRIDES` dict keyed on COURTHOUSE, but it turned out to be papering over a wrong-prefab bug — the curated list pointed at `Courthouse_low` (an unused mesh) instead of `Palace` (what the game actually uses for IMPROVEMENT_COURTHOUSE). The XML-driven discovery work (see `improvement-naming-alignment.md`) eliminated that bug class, and the override dict was deleted along with the curated lists.
+
+There is also no longer a raw-mesh fallback path. The previous fallback existed because the curated list contained mesh names that weren't prefab GameObjects; with XML-driven discovery, every entry is a real prefab path, so `find_root_gameobject` + `walk_prefab` is the only render path.
+
+## Asset discovery: XML-driven
+
+The list of improvements to render is no longer hand-curated. `extract_improvement_meshes` calls `pinacotheca.asset_index.load_improvement_assets(xml_dir)`, which walks the game's `improvement.xml → assetVariation.xml → asset.xml` chain (plus DLC variants) to produce a list of `(zIconName, prefab_name)` pairs. Output filenames use `IMPROVEMENT_3D_{zIconName.removeprefix("IMPROVEMENT_")}.png` to match what downstream consumers (per-ankh) expect. See `docs/improvement-naming-alignment.md` for the full design.
+
+A small `SUPPLEMENTAL_PREFABS` constant in `extractor.py` covers prefabs not represented in `improvement.xml` (currently only the four pyramid construction stages used by the build animation).
+
+A small `PREFAB_DECODE_BLACKLIST` constant in `extractor.py` skips prefabs whose Texture2D decode causes UnityPy to SIGSEGV (currently only `Fort`). SIGSEGV bypasses Python `try/except`, so the only safe handling is to skip these before reading textures.
 
 ## File map
 
-- `src/pinacotheca/extractor.py` — `IMPROVEMENT_MESHES` curated list (~50 entries), `extract_improvement_meshes()`, `COMPOSITE_PREFABS` list, `extract_composite_meshes()`. Also `build_texture_lookup()` and `DIFFUSE_TEXTURE_SUFFIXES` constant for cross-format texture matching (`_diffuse`, `_albedo`, `_diff`, `_basecolor`, `_basemap`, `_maintex`).
+- `src/pinacotheca/asset_index.py` — XML chain parser. `load_improvement_assets(xml_dir)` returns one `ImprovementAsset` per unique `zIconName`. Pure-Python, no UnityPy dep. Reads `improvement.xml` + `improvement-event.xml`, `assetVariation.xml` + DLC variants, `asset.xml` + DLC variants.
+- `src/pinacotheca/extractor.py` — `extract_improvement_meshes()` calls `load_improvement_assets()` then iterates `+ SUPPLEMENTAL_PREFABS`. Includes `PREFAB_DECODE_BLACKLIST` for SIGSEGV-causing prefabs. Also `build_texture_lookup()` (used by unit extraction) and `DIFFUSE_TEXTURE_SUFFIXES` constant.
 - `src/pinacotheca/renderer.py` — `render_mesh_to_image()` with `force_upright` parameter for buildings (always Y-up, 30° tilt, 45° FOV).
-- `src/pinacotheca/prefab.py` — GameObject/Transform walker, world-matrix composer, OBJ baker.
-- `tests/test_prefab.py` — synthetic unit tests for the prefab math (quaternion → matrix, TRS chain, normal transform under non-uniform scale, X-flip-once, winding flip on negative scale).
+- `src/pinacotheca/prefab.py` — GameObject/Transform walker, world-matrix composer, OBJ baker (`bake_to_obj` with optional `pre_rotation_y_deg`), splat material constants and `find_ground_y` / `find_geometry_y_min` helpers, `strip_plinth_from_obj` with optional `cut_y_override`.
+- `tests/test_asset_index.py` — synthetic-XML tests for the chain (SingleAsset, aiRandomAssets, DLC merge, dedupe-by-zIconName, broken-chain skipping).
+- `tests/test_prefab.py` — synthetic unit tests for the prefab math (quaternion → matrix, TRS chain, normal transform under non-uniform scale, X-flip-once, winding flip on negative scale, splat-Y helpers, `cut_y_override` safety guards, `pre_rotation_y_deg` Z-flip).
 - `scripts/probes/` — exploration scripts used during the investigation (mesh enumerator, texture finder, prefab inspector). Not required at runtime.
+- `scripts/inspect_splat_y.py` — diagnostic that compares splat-plane Y to building first-dense-bin Y. Useful for auditing new entries or DLC content.
 
 ## Reference: game source files
 

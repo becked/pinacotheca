@@ -244,7 +244,7 @@ def _normal_matrix(m3: NDArray[np.float64]) -> NDArray[np.float64]:
         return m3  # singular; fall back to direct apply
 
 
-def bake_to_obj(parts: list[PrefabPart]) -> str:
+def bake_to_obj(parts: list[PrefabPart], *, pre_rotation_y_deg: float = 0.0) -> str:
     """
     Bake parts into a single OBJ string in OpenGL right-handed space.
 
@@ -254,8 +254,34 @@ def bake_to_obj(parts: list[PrefabPart]) -> str:
     result is consumable by `renderer.parse_obj()` directly.
 
     Parts with no usable mesh data are skipped silently.
+
+    Args:
+        pre_rotation_y_deg: optional Y-axis rotation (in degrees) applied
+            to every part's world matrix before baking. Used by the
+            improvement extractor to flip buildings 180° so their authored
+            front face (Unity -Z) appears on the OBJ +Z side our renderer
+            views. Y rotation is a proper rotation (det = +1), so the
+            winding-flip logic below is unaffected. Default 0° preserves
+            historical behavior for non-extractor callers.
     """
     from UnityPy.helpers.MeshHelper import MeshHandler
+
+    # Build the optional Y-rotation pre-multiplier once. Identity when no
+    # rotation is requested so the inner loop is unchanged for that path.
+    if pre_rotation_y_deg != 0.0:
+        theta = float(np.radians(pre_rotation_y_deg))
+        c, s = float(np.cos(theta)), float(np.sin(theta))
+        pre_rot = np.array(
+            [
+                [c, 0.0, s, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [-s, 0.0, c, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float64,
+        )
+    else:
+        pre_rot = None
 
     sb: list[str] = []
     sb.append("g prefab\n")
@@ -279,7 +305,7 @@ def bake_to_obj(parts: list[PrefabPart]) -> str:
         if handler.m_VertexCount <= 0 or not handler.m_Vertices:
             continue
 
-        m = part.world_matrix
+        m = part.world_matrix if pre_rot is None else pre_rot @ part.world_matrix
         m3 = m[:3, :3]
         nm3 = _normal_matrix(m3)
         # Negative determinant means the part is mirrored — reverse winding
@@ -408,6 +434,18 @@ def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
 SPLAT_MATERIAL_PREFIXES: tuple[str, ...] = ("Splat",)
 SPLAT_MATERIAL_EXACT: tuple[str, ...] = ("WaterNoFoam", "BathWater")
 
+# Ground-stamp materials in priority order. SplatHeightDefault is the actual
+# heightmap stamp the game uses to deform terrain UP around buildings; the
+# others are co-located terrain texture/clutter splats and serve as fallbacks
+# when no explicit height stamp exists. WATER_MATERIALS are visible water
+# surfaces inside buildings (pools, cisterns), NOT ground stamps.
+GROUND_HEIGHT_MATERIALS: tuple[str, ...] = ("SplatHeightDefault",)
+GROUND_TERRAIN_MATERIALS: tuple[str, ...] = (
+    "SplatClutterDefault",
+    "SplatTextureDefaultPVT",
+)
+WATER_MATERIALS: tuple[str, ...] = ("WaterNoFoam", "BathWater")
+
 
 def _is_splat_material_name(name: str) -> bool:
     if not name:
@@ -453,6 +491,124 @@ def drop_splat_meshes(parts: list[PrefabPart]) -> list[PrefabPart]:
     return kept
 
 
+def _primary_material_name(part: PrefabPart) -> str:
+    """Return the part's first material name, or '' if unreadable."""
+    for mat_pptr in part.materials:
+        try:
+            if not bool(mat_pptr):
+                continue
+            mat = mat_pptr.deref_parse_as_object()
+            return str(getattr(mat, "m_Name", "") or "")
+        except Exception:
+            return ""
+    return ""
+
+
+def _world_y_max(part: PrefabPart) -> float | None:
+    """Return the max world-space Y across a part's vertices, or None on failure."""
+    from UnityPy.helpers.MeshHelper import MeshHandler
+
+    try:
+        mesh = part.mesh_obj.deref_parse_as_object()
+        handler = MeshHandler(mesh)
+        handler.process()  # type: ignore[no-untyped-call]
+    except Exception:
+        return None
+    if handler.m_VertexCount <= 0 or not handler.m_Vertices:
+        return None
+    m = part.world_matrix
+    y_max = -float("inf")
+    for vx, vy, vz in handler.m_Vertices:
+        wy = m[1, 0] * vx + m[1, 1] * vy + m[1, 2] * vz + m[1, 3]
+        if wy > y_max:
+            y_max = float(wy)
+    return y_max if y_max != -float("inf") else None
+
+
+def _world_y_min(part: PrefabPart) -> float | None:
+    """Return the min world-space Y across a part's vertices, or None on failure."""
+    from UnityPy.helpers.MeshHelper import MeshHandler
+
+    try:
+        mesh = part.mesh_obj.deref_parse_as_object()
+        handler = MeshHandler(mesh)
+        handler.process()  # type: ignore[no-untyped-call]
+    except Exception:
+        return None
+    if handler.m_VertexCount <= 0 or not handler.m_Vertices:
+        return None
+    m = part.world_matrix
+    y_min = float("inf")
+    for vx, vy, vz in handler.m_Vertices:
+        wy = m[1, 0] * vx + m[1, 1] * vy + m[1, 2] * vz + m[1, 3]
+        if wy < y_min:
+            y_min = float(wy)
+    return y_min if y_min != float("inf") else None
+
+
+def find_geometry_y_min(parts: list[PrefabPart]) -> float | None:
+    """
+    Return the minimum world Y across non-splat parts, or None.
+
+    Used to sanity-check splat-plane Y in composite prefabs: if the
+    splat plane sits well above the building's actual lowest geometry,
+    it's likely on a terrace (e.g., Hanging_Garden) rather than at the
+    true ground line, and the splat-Y should not be used as a plinth
+    cut. Helper for that comparison.
+    """
+    y_mins: list[float] = []
+    for part in parts:
+        name = _primary_material_name(part)
+        if _is_splat_material_name(name):
+            continue
+        y = _world_y_min(part)
+        if y is not None:
+            y_mins.append(y)
+    return min(y_mins) if y_mins else None
+
+
+def find_ground_y(parts: list[PrefabPart]) -> float | None:
+    """
+    Return the world Y of the prefab's terrain ground stamp, or None.
+
+    Old World prefabs embed `Plane` GameObjects with `SplatHeightDefault`
+    materials on Unity's `TerrainHeightSplat` layer. At runtime an
+    orthographic camera bakes those into a global heightmap that deforms
+    terrain UP to meet the building's footprint, hiding the plinth below.
+    The Y of those planes is therefore the building's true ground line —
+    the same value the game uses to know where to raise terrain to.
+
+    We prefer `SplatHeightDefault` (the actual height stamp). If absent,
+    we fall back to other ground splats (`SplatClutterDefault`,
+    `SplatTextureDefaultPVT`) which sit at the same Y in practice.
+    Water-surface materials (`WaterNoFoam`, `BathWater`) are excluded —
+    they sit ABOVE the ground inside the architecture (bath water, ponds).
+
+    Returns None when no ground splat is present (~22 of 56 single-piece
+    improvements; mostly religious buildings and small rural assets).
+    Callers should fall back to the density heuristic in that case.
+    """
+    height_ys: list[float] = []
+    terrain_ys: list[float] = []
+    for part in parts:
+        name = _primary_material_name(part)
+        if name in WATER_MATERIALS:
+            continue
+        if name in GROUND_HEIGHT_MATERIALS:
+            y = _world_y_max(part)
+            if y is not None:
+                height_ys.append(y)
+        elif name in GROUND_TERRAIN_MATERIALS:
+            y = _world_y_max(part)
+            if y is not None:
+                terrain_ys.append(y)
+    if height_ys:
+        return max(height_ys)
+    if terrain_ys:
+        return max(terrain_ys)
+    return None
+
+
 def _parse_obj_vertices_and_faces(
     obj_str: str,
 ) -> tuple[list[tuple[float, float, float]], list[list[int]]]:
@@ -487,10 +643,11 @@ def _parse_obj_vertices_and_faces(
 def strip_plinth_from_obj(
     obj_str: str,
     *,
+    cut_y_override: float | None = None,
     footprint_threshold: float = 0.80,
     extent_fraction: float = 0.05,
     density_threshold: float = 0.05,
-    max_cut_fraction: float = 0.50,
+    max_cut_fraction: float = 0.65,
     n_bins: int = 20,
 ) -> str:
     """
@@ -501,7 +658,17 @@ def strip_plinth_from_obj(
     our renders onto their own terrain hex layer end up with a visible
     double-floor effect. This function detects and removes the slab.
 
-    Algorithm:
+    Two paths to a cut height:
+
+    **Path 1 — Explicit override** (``cut_y_override``):
+        When the caller knows the ground line (e.g., from `find_ground_y`
+        sampling the prefab's `SplatHeightDefault` plane), pass it here.
+        Two safety guards: refuse if the override exceeds
+        ``max_cut_fraction`` of the model's Y extent, and refuse if it
+        would clamp ≥50% of vertices. Either guard falls through to the
+        density heuristic below.
+
+    **Path 2 — Density heuristic** (when no override or override rejected):
         1. **Detect**: bin verts by Y; if the bottom `extent_fraction`
            slice of Y verts covers ≥ `footprint_threshold` of the full
            XZ footprint, treat as plinth. Otherwise return unchanged.
@@ -512,25 +679,26 @@ def strip_plinth_from_obj(
            extent so we never cut more than half the building. If no
            dense bin is found in that range, fall back to the detection
            cut (5%) — strips the slab's bottom face only, harmless.
-        3. **Clamp + drop**: re-emit OBJ with two changes:
-           - Any vertex with Y < cut_y is clamped to Y = cut_y. This
-             flattens slab side walls (which often span from y_min all
-             the way up to the building base via long triangles) into a
-             near-zero-thickness disc at cut_y.
-             Triangle-drop alone is insufficient for these slabs because
-             their side faces straddle the cut.
-           - Any face whose three original vert Ys were all ≤ cut_y is
-             dropped (slab top + bottom faces). The clamped disc has no
-             surviving floor/ceiling, just the building geometry above.
 
-    Two thresholds are intentional: the slab's geometric extent (often
-    20–30% of total Y) is much larger than the detection window (5%), so
-    the cut height must be discovered dynamically from vertex density
-    rather than fixed at the detection knob. See Library's Y histogram in
-    the per-ankh investigation: 12 verts at the slab's bottom (5%-of-Y
-    bin), then a 30% empty Y region (slab interior), then 860 verts at
-    the building's first floor (45%-of-Y bin) — that 45% mark is the
-    real slab top.
+    **Clamp + drop emission** (both paths share this):
+        - Any vertex with Y < cut_y is clamped to Y = cut_y. This
+          flattens slab side walls (which often span from y_min all
+          the way up to the building base via long triangles) into a
+          near-zero-thickness disc at cut_y. Triangle-drop alone is
+          insufficient for these slabs because their side faces
+          straddle the cut.
+        - Any face whose three original vert Ys were all ≤ cut_y is
+          dropped (slab top + bottom faces). The clamped disc has no
+          surviving floor/ceiling, just the building geometry above.
+
+    Two density thresholds are intentional: the slab's geometric extent
+    (often 20–30% of total Y) is much larger than the detection window
+    (5%), so the cut height must be discovered dynamically from vertex
+    density rather than fixed at the detection knob. See Library's Y
+    histogram in the per-ankh investigation: 12 verts at the slab's
+    bottom (5%-of-Y bin), then a 30% empty Y region (slab interior),
+    then 860 verts at the building's first floor (45%-of-Y bin) — that
+    45% mark is the real slab top.
 
     Operates on Y-up world-space coords (Unity's native axis preserved by
     UnityPy's MeshExporter and by `bake_to_obj`).
@@ -546,38 +714,51 @@ def strip_plinth_from_obj(
     if extent <= 0:
         return obj_str
 
-    detect_cut = y_min + extent_fraction * extent
+    cut_y: float | None = None
 
-    xs_all = [v[0] for v in vertices]
-    zs_all = [v[2] for v in vertices]
-    full_area = (max(xs_all) - min(xs_all)) * (max(zs_all) - min(zs_all))
-    if full_area <= 0:
-        return obj_str
+    # ─── Path 1: explicit override (typically find_ground_y splat-Y) ────
+    if cut_y_override is not None:
+        max_cut_y = y_min + max_cut_fraction * extent
+        if cut_y_override <= max_cut_y:
+            verts_below = sum(1 for v in vertices if v[1] < cut_y_override)
+            if verts_below * 2 < len(vertices):
+                cut_y = cut_y_override
 
-    bottom_verts = [v for v in vertices if v[1] <= detect_cut]
-    if not bottom_verts:
-        return obj_str
-    bxs = [v[0] for v in bottom_verts]
-    bzs = [v[2] for v in bottom_verts]
-    bottom_area = (max(bxs) - min(bxs)) * (max(bzs) - min(bzs))
+    # ─── Path 2: density heuristic ──────────────────────────────────────
+    if cut_y is None:
+        detect_cut = y_min + extent_fraction * extent
 
-    if bottom_area / full_area < footprint_threshold:
-        return obj_str
+        xs_all = [v[0] for v in vertices]
+        zs_all = [v[2] for v in vertices]
+        full_area = (max(xs_all) - min(xs_all)) * (max(zs_all) - min(zs_all))
+        if full_area <= 0:
+            return obj_str
 
-    # Plinth detected — find the slab's top via vertex density.
-    bin_h = extent / n_bins
-    bins = [0] * n_bins
-    for v in vertices:
-        idx = min(int((v[1] - y_min) / bin_h), n_bins - 1)
-        bins[idx] += 1
-    threshold_count = max(1, int(len(vertices) * density_threshold))
-    max_bin_idx = int(n_bins * max_cut_fraction)
-    cut_y = detect_cut  # fallback if no dense bin found below the cap
-    for i in range(min(max_bin_idx + 1, n_bins)):
-        if bins[i] >= threshold_count:
-            cut_y = y_min + i * bin_h
-            break
+        bottom_verts = [v for v in vertices if v[1] <= detect_cut]
+        if not bottom_verts:
+            return obj_str
+        bxs = [v[0] for v in bottom_verts]
+        bzs = [v[2] for v in bottom_verts]
+        bottom_area = (max(bxs) - min(bxs)) * (max(bzs) - min(bzs))
 
+        if bottom_area / full_area < footprint_threshold:
+            return obj_str
+
+        # Plinth detected — find the slab's top via vertex density.
+        bin_h = extent / n_bins
+        bins = [0] * n_bins
+        for v in vertices:
+            idx = min(int((v[1] - y_min) / bin_h), n_bins - 1)
+            bins[idx] += 1
+        threshold_count = max(1, int(len(vertices) * density_threshold))
+        max_bin_idx = int(n_bins * max_cut_fraction)
+        cut_y = detect_cut  # fallback if no dense bin found below the cap
+        for i in range(min(max_bin_idx + 1, n_bins)):
+            if bins[i] >= threshold_count:
+                cut_y = y_min + i * bin_h
+                break
+
+    # ─── Clamp + drop emission ──────────────────────────────────────────
     out_lines: list[str] = []
     for line in obj_str.split("\n"):
         stripped = line.strip().split()

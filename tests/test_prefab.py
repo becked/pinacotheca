@@ -17,6 +17,8 @@ from pinacotheca.prefab import (
     PrefabPart,
     bake_to_obj,
     drop_splat_meshes,
+    find_geometry_y_min,
+    find_ground_y,
     quat_to_mat3,
     strip_plinth_from_obj,
     trs_matrix,
@@ -479,3 +481,232 @@ def test_strip_plinth_threshold_default_80() -> None:
     out = strip_plinth_from_obj(obj)
     f_lines = [ln for ln in out.splitlines() if ln.startswith("f ")]
     assert len(f_lines) == 2
+
+
+# --- strip_plinth_from_obj cut_y_override -----------------------------------
+
+
+def test_strip_plinth_override_applied_at_exact_y() -> None:
+    """When cut_y_override is provided and passes safety guards, cut occurs
+    at exactly that Y regardless of vertex density. Also verifies the override
+    bypasses the footprint detection — even a non-plinth-shaped mesh gets
+    clamped if the override passes."""
+    # 1 vert at y=0 (below cut), 4 verts at y=1 (above) — only 20% will be
+    # clamped, well under the 50%-vert-count guard. Cut at 0.5 is also under
+    # the 65%-of-extent guard (max_cut_y = 0 + 0.65*1 = 0.65).
+    vertices = [
+        (0.0, 0.0, 0.0),  # below cut — should be clamped
+        (1.0, 1.0, 0.0),
+        (0.0, 1.0, 1.0),
+        (1.0, 1.0, 1.0),
+        (0.5, 1.0, 0.5),
+    ]
+    faces = [(1, 2, 3), (2, 3, 4), (3, 4, 5)]
+    obj = _obj_from_verts_and_faces(vertices, faces)
+    out = strip_plinth_from_obj(obj, cut_y_override=0.5)
+    v_lines = [ln for ln in out.splitlines() if ln.startswith("v ")]
+    # Vert 1 (y=0) clamped to 0.5; verts 2-5 (y=1) unchanged.
+    assert float(v_lines[0].split()[2]) == 0.5
+    assert float(v_lines[1].split()[2]) == 1.0
+    assert float(v_lines[2].split()[2]) == 1.0
+    assert float(v_lines[3].split()[2]) == 1.0
+    assert float(v_lines[4].split()[2]) == 1.0
+
+
+def test_strip_plinth_override_rejected_by_extent_guard() -> None:
+    """An override that would cut more than max_cut_fraction (default 0.65)
+    of the model's Y extent is refused; falls through to density heuristic.
+    Here the heuristic returns the OBJ unchanged because no plinth shape
+    is detected."""
+    # Extent y=0..1. cut_y_override=0.9 would cut 90% (>65% cap). Refused.
+    vertices = [
+        (0.0, 0.0, 0.0),
+        (1.0, 0.0, 0.0),
+        (0.5, 1.0, 0.5),
+    ]
+    faces = [(1, 2, 3)]
+    obj = _obj_from_verts_and_faces(vertices, faces)
+    out = strip_plinth_from_obj(obj, cut_y_override=0.9)
+    # Heuristic doesn't fire (no plinth shape) → unchanged.
+    assert out == obj
+
+
+def test_strip_plinth_override_rejected_by_vert_count_guard() -> None:
+    """An override that would clamp ≥50% of vertices is refused. With 5
+    verts at y=0 and 5 verts at y=10, an override at y=5 would clamp the
+    bottom 5 (50%) — guard triggers."""
+    vertices: list[tuple[float, float, float]] = []
+    # 5 verts at y=0 (would all be clamped if override accepted)
+    for i in range(5):
+        vertices.append((float(i), 0.0, 0.0))
+    # 5 verts at y=10
+    for i in range(5):
+        vertices.append((float(i), 10.0, 0.0))
+    faces = [(1, 2, 6), (3, 4, 7)]
+    obj = _obj_from_verts_and_faces(vertices, faces)
+    # Override at y=5 lies within the 65%-of-extent cap (cap is at y=6.5)
+    # so the extent guard passes; but it would clamp 5 of 10 verts (50%),
+    # which is ≥50%, so the vert-count guard refuses it.
+    out = strip_plinth_from_obj(obj, cut_y_override=5.0)
+    # Guard refused → no plinth detected by heuristic either → unchanged.
+    assert out == obj
+
+
+def test_strip_plinth_override_none_preserves_existing_behavior() -> None:
+    """Regression: cut_y_override=None (default) should produce identical
+    output to omitting the parameter entirely. Reuses the canonical Library
+    test scenario."""
+    vertices = [
+        (-5.0, 0.0, -5.0),
+        (5.0, 0.0, -5.0),
+        (5.0, 0.0, 5.0),
+        (-5.0, 0.0, 5.0),
+        (-1.0, 5.0, -1.0),
+        (1.0, 5.0, -1.0),
+        (0.0, 10.0, 0.0),
+        (0.0, 5.0, 1.0),
+    ]
+    faces = [(1, 2, 3), (1, 3, 4), (5, 6, 7), (5, 7, 8), (6, 8, 7), (5, 8, 6)]
+    obj = _obj_from_verts_and_faces(vertices, faces)
+    a = strip_plinth_from_obj(obj)
+    b = strip_plinth_from_obj(obj, cut_y_override=None)
+    assert a == b
+
+
+# --- find_ground_y / find_geometry_y_min ------------------------------------
+
+
+def _ground_part(material_name: str, world_y: float) -> PrefabPart:
+    """Build a synthetic part: one vertex at (0, world_y, 0) with the given
+    material. Identity world matrix so the input Y is also the world Y."""
+    mesh = _FakeMesh(
+        m_Name=f"plane_{material_name}",
+        m_VertexCount=1,
+        m_Vertices=[(0.0, world_y, 0.0)],
+        m_UV0=[],
+        m_Normals=[],
+        m_SubMeshes=[],
+        triangles=[],
+    )
+    return PrefabPart(
+        mesh_obj=_MeshObj(mesh),
+        world_matrix=np.eye(4),
+        materials=[_MaterialPPtr(material_name)],
+    )
+
+
+def test_find_ground_y_prefers_height_default(monkeypatch: Any) -> None:
+    """SplatHeightDefault wins over SplatClutterDefault when both present."""
+    _patch_mesh_handler(monkeypatch)
+    parts = [
+        _ground_part("SplatHeightDefault", 0.30),
+        _ground_part("SplatClutterDefault", 0.99),  # should be ignored
+        _ground_part("Library", 5.0),  # building geometry; ignored
+    ]
+    assert find_ground_y(parts) == 0.30
+
+
+def test_find_ground_y_falls_back_to_clutter(monkeypatch: Any) -> None:
+    """When no SplatHeightDefault, fall back to SplatClutterDefault /
+    SplatTextureDefaultPVT (max across them)."""
+    _patch_mesh_handler(monkeypatch)
+    parts = [
+        _ground_part("SplatClutterDefault", 0.10),
+        _ground_part("SplatTextureDefaultPVT", 0.42),
+        _ground_part("Library", 5.0),
+    ]
+    assert find_ground_y(parts) == 0.42
+
+
+def test_find_ground_y_excludes_water(monkeypatch: Any) -> None:
+    """Water-surface materials sit ABOVE ground (visible bath/pond water)
+    and must not contaminate the ground-line measurement."""
+    _patch_mesh_handler(monkeypatch)
+    parts = [
+        _ground_part("SplatHeightDefault", 0.0),
+        _ground_part("BathWater", 1.5),
+        _ground_part("WaterNoFoam", 2.0),
+    ]
+    assert find_ground_y(parts) == 0.0
+
+
+def test_find_ground_y_returns_none_when_no_splats(monkeypatch: Any) -> None:
+    """Most religious buildings ship without splat planes; helper returns
+    None and the caller falls back to the density heuristic."""
+    _patch_mesh_handler(monkeypatch)
+    parts = [
+        _ground_part("Library", 5.0),
+        _ground_part("Granary", 3.0),
+    ]
+    assert find_ground_y(parts) is None
+
+
+def test_find_ground_y_returns_none_when_only_water(monkeypatch: Any) -> None:
+    _patch_mesh_handler(monkeypatch)
+    parts = [_ground_part("BathWater", 1.0)]
+    assert find_ground_y(parts) is None
+
+
+def test_find_geometry_y_min_excludes_splats(monkeypatch: Any) -> None:
+    """Used by the composite-prefab defensive check: returns the min Y
+    across non-splat parts so we can compare splat-Y to it."""
+    _patch_mesh_handler(monkeypatch)
+    parts = [
+        _ground_part("SplatHeightDefault", -0.5),  # ignored — splat
+        _ground_part("Library", -2.0),  # building geometry; counted
+        _ground_part("Granary", 1.0),
+    ]
+    assert find_geometry_y_min(parts) == -2.0
+
+
+# --- bake_to_obj pre_rotation_y_deg -----------------------------------------
+
+
+def test_bake_to_obj_pre_rotation_180_flips_z(monkeypatch: Any) -> None:
+    """A vertex at Unity-space (0, 0, 1) — the building's "front" by
+    convention — should appear at OBJ-space (0, 0, -1) after the 180°
+    Y-rotation pre-multiplied into the world matrix. The X-flip in the
+    bake then preserves left/right correctly. Same applies to normals."""
+    mesh = _FakeMesh(
+        m_Name="dot",
+        m_VertexCount=1,
+        m_Vertices=[(0.0, 0.0, 1.0)],
+        m_UV0=[],
+        m_Normals=[(0.0, 0.0, 1.0)],
+        m_SubMeshes=[],
+        triangles=[],
+    )
+    _patch_mesh_handler(monkeypatch)
+    parts = [PrefabPart(mesh_obj=_MeshObj(mesh), world_matrix=np.eye(4), materials=[])]
+
+    obj = bake_to_obj(parts, pre_rotation_y_deg=180.0)
+    v_line = next(ln for ln in obj.splitlines() if ln.startswith("v "))
+    coords = [float(x) for x in v_line.split()[1:]]
+    np.testing.assert_allclose(coords, [0.0, 0.0, -1.0], atol=1e-6)
+
+    n_line = next(ln for ln in obj.splitlines() if ln.startswith("vn "))
+    n_coords = [float(x) for x in n_line.split()[1:]]
+    np.testing.assert_allclose(n_coords, [0.0, 0.0, -1.0], atol=1e-6)
+
+
+def test_bake_to_obj_pre_rotation_default_unchanged(monkeypatch: Any) -> None:
+    """Regression: omitting pre_rotation_y_deg or passing 0.0 produces
+    identical output to the historical (no-rotation) behavior."""
+    mesh = _FakeMesh(
+        m_Name="dot",
+        m_VertexCount=1,
+        m_Vertices=[(0.0, 0.0, 1.0)],
+        m_UV0=[],
+        m_Normals=[(0.0, 0.0, 1.0)],
+        m_SubMeshes=[],
+        triangles=[],
+    )
+    _patch_mesh_handler(monkeypatch)
+    parts = [PrefabPart(mesh_obj=_MeshObj(mesh), world_matrix=np.eye(4), materials=[])]
+    a = bake_to_obj(parts)
+    b = bake_to_obj(parts, pre_rotation_y_deg=0.0)
+    assert a == b
+    # And the single vertex is at the original (X-flipped) location.
+    v_line = next(ln for ln in a.splitlines() if ln.startswith("v "))
+    coords = [float(x) for x in v_line.split()[1:]]
+    np.testing.assert_allclose(coords, [0.0, 0.0, 1.0], atol=1e-6)
