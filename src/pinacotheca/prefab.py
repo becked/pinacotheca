@@ -407,6 +407,7 @@ def _decode_texture(tex: Any) -> Image.Image | None:
     Returns None when the texture is missing, decode fails for an
     unsupported reason, or the BC6H fallback itself fails.
     """
+    pil_err: Exception | None = None
     try:
         img = getattr(tex, "image", None)
         if img is not None:
@@ -415,8 +416,6 @@ def _decode_texture(tex: Any) -> Image.Image | None:
         # Fall through to format-specific recovery; non-BC6H errors
         # propagate as None below.
         pil_err = exc
-    else:
-        pil_err = None
 
     fmt = getattr(tex, "m_TextureFormat", None)
     fmt_value = int(fmt) if fmt is not None else None
@@ -441,7 +440,7 @@ def _decode_texture(tex: Any) -> Image.Image | None:
     img = Image.frombuffer("RGBA", (width, height), decoded, "raw", "BGRA", 0, 1)
     # Unity texture origin is bottom-left; UnityPy's standard path applies
     # this flip — match it so UVs line up with the rest of our pipeline.
-    return img.transpose(Image.FLIP_TOP_BOTTOM)
+    return img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
 
 
 def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
