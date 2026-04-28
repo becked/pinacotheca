@@ -82,7 +82,7 @@ docs/                 # Investigation writeups, feature requests, references
 ├── improvement-naming-alignment.md       # Canonical zIconName follow-up effort
 ├── feature-request-per-ankh-map-atlas.md # Downstream consumer requirements
 ├── per-ankh-missing-improvements.md      # Gap tracking
-└── runtime-composed-cities.md            # Why 7 capitals + urban tiles aren't extractable as PNG
+└── runtime-composed-cities.md            # ClutterTransforms parser for sparse capitals + urban tiles
 
 web/                  # SvelteKit gallery (primary web interface)
 ├── scripts/
@@ -260,9 +260,13 @@ rm extracted/sprites/improvements/IMPROVEMENT_3D_LIBRARY.png
 pinacotheca
 ```
 
+### Sparse capitals + urban tiles via ClutterTransforms
+
+The 7 sparse base-game capitals (Greece, Rome, Persia, Carthage, Babylonia, Assyria, Egypt), every per-nation urban tile, and several improvements (Farm, Mine, Pasture, Camp, Grove, City_Site, Outpost_Ruins) carry their visible 3D content in a `ClutterTransforms` MonoBehaviour rather than a `MeshFilter` tree. `src/pinacotheca/clutter_transforms.py` hand-parses the MonoBehaviour body against the field layout from the decompiled C# (no embedded TypeTree), expands each `(model, instance)` pair into a `PrefabPart` at `parent_world @ instance.TRS`, and feeds the same `bake_to_obj` + `render_mesh_to_image` pipeline as everything else. End-of-parse byte-budget assertion fails loudly on layout drift across game versions. See `docs/runtime-composed-cities.md` for the field layout and investigation history.
+
 ### What's NOT extracted
 
-7 of 12 nation capitals (Greece, Persia, Rome, Carthage, Babylonia, Assyria, Egypt) and all per-nation urban tiles use runtime PVT (procedural virtual texturing) composition that we can't reproduce in isolated PNG renders without re-implementing a chunk of the game's terrain shader. See `docs/runtime-composed-cities.md` for the full investigation and a phased implementation plan if/when this becomes worth pursuing.
+The PVT (procedural virtual texturing) terrain layer — per-nation dirt patterns under the cities (Greek mosaics, Egyptian sand patches, etc.) — is deferred. It paints the ground beneath the buildings but the architectural identity comes from the clutter, which renders without it. See the PVT-splat investigation section in `docs/runtime-composed-cities.md` for the verified field layouts if anyone picks this up.
 
 ## Downstream Consumer Contract
 

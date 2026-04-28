@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-04-28
+
+### Added
+- 25 new `IMPROVEMENT_3D_*.png` outputs driven by a `ClutterTransforms`
+  hand-parser (`src/pinacotheca/clutter_transforms.py`):
+  - 7 sparse capitals: Greece, Rome, Egypt, Persia, Carthage, Babylonia, Assyria
+  - 11 per-nation urban tiles
+  - 7 improvements that turned out to be clutter-driven (previously
+    classified as PVT-only): Farm, Mine, Pasture, Camp, Grove,
+    City_Site, Outpost_Ruins
+- `load_urban_assets()` discovers per-nation urban-tile prefabs via
+  `ASSET_<NATION>_URBAN` entries in `asset.xml`
+- Verbose `[CT]` log lines per prefab surfacing clutter inventory
+  (model count, instance count, ClutterTransforms count) so each run
+  reports which targets carry clutter
+
+### Changed
+- `extract_improvement_meshes` now loads `globalgamemanagers.assets`
+  alongside `resources.assets` so MonoBehaviour script-class resolution
+  works (m_Script PPtrs typically have `file_id=1`)
+- `drop_splat_meshes` now also drops materialless parts (capitals'
+  `*Bull` no-op `TerrainHeightSplat` placeholders with empty
+  MeshRenderer materials) and no longer restores the original list
+  when the filter would drop everything — with clutter augmentation in
+  place, "all `MeshFilter` parts are splat or materialless" is a
+  legitimate signal that the real geometry comes from
+  `ClutterTransforms` rather than an over-aggressive filter
+
+### Fixed
+- Sparse capitals + urban tiles previously produced no PNG (skipped
+  with "no diffuse texture in prefab materials"); now render through
+  the same pipeline as every other improvement
+
 ## [2.0.0] - 2026-04-27
 
 ### Breaking
