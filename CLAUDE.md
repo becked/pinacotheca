@@ -81,7 +81,6 @@ docs/                 # Investigation writeups, feature requests, references
 ├── atlas-reference.md
 ├── improvement-naming-alignment.md       # Canonical zIconName follow-up effort
 ├── feature-request-per-ankh-map-atlas.md # Downstream consumer requirements
-├── per-ankh-missing-improvements.md      # Gap tracking
 └── runtime-composed-cities.md            # ClutterTransforms parser for sparse capitals + urban tiles
 
 web/                  # SvelteKit gallery (primary web interface)
@@ -272,7 +271,7 @@ The PVT (procedural virtual texturing) terrain layer — per-nation dirt pattern
 
 The 3D improvement renders are consumed by external tools that scan the filesystem rather than parsing a manifest:
 
-- **per-ankh** (hex-based map renderer) — bakes our `IMPROVEMENT_3D_*.png` outputs into atlases for its map view. Looks up by `(tile.improvement, owner.family)` keyed on the game's canonical `zIconName`. Since the XML-driven discovery work, our filenames now match canonical zIconName directly. See `docs/feature-request-per-ankh-map-atlas.md` for their requirements and `docs/per-ankh-missing-improvements.md` for the gap (we ship ~112 of their ~179 in-use improvement types).
+- **per-ankh** (hex-based map renderer) — bakes our `IMPROVEMENT_3D_*.png` outputs into atlases for its map view. Looks up by `(tile.improvement, owner.family)` keyed on the game's canonical `zIconName`. Since the XML-driven discovery + ClutterTransforms work, our filenames match canonical zIconName directly and the catalog covers ~141 outputs (essentially everything per-ankh asked for; see `docs/feature-request-per-ankh-map-atlas.md` for the original requirements).
 - **SvelteKit gallery** (`web/`) — `generate-manifest.ts` scans `extracted/sprites/` at build time and emits `manifest.json`. New PNGs auto-appear; no code changes needed.
 
 **API surface**: PNG filenames in `extracted/sprites/improvements/IMPROVEMENT_3D_<NAME>.png`. Renames are breaking changes; coordinate with per-ankh before renaming. The naming-alignment doc proposes a future major version bump that aligns all names to canonical zIconName at once.
