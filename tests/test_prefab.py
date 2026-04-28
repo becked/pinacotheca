@@ -302,15 +302,29 @@ def test_drop_splat_meshes_keeps_normal_materials() -> None:
     assert len(kept) == 4
 
 
-def test_drop_splat_meshes_returns_original_if_all_dropped() -> None:
-    """Defensive fallback: if filter would empty a non-empty input, return
-    the original list unchanged."""
+def test_drop_splat_meshes_drops_materialless_part() -> None:
+    """A part with no materials (e.g. capital `*Bull` GameObjects whose
+    MeshRenderer.m_Materials is empty) is a no-op the renderer should skip;
+    leaving it in produces a flat textured plane at ground level."""
+    materialless = PrefabPart(mesh_obj=None, world_matrix=np.eye(4), materials=[])
+    parts = [_part_with_material("Library"), materialless]
+    kept = drop_splat_meshes(parts)
+    assert len(kept) == 1
+    assert kept[0].materials[0].deref_parse_as_object().m_Name == "Library"
+
+
+def test_drop_splat_meshes_empty_when_all_filtered() -> None:
+    """When the input is exclusively splat/materialless parts the result is
+    empty. Callers (extractor) augment with `clutter_to_prefab_parts` and
+    handle truly-empty combined output via the downstream skip path. This is
+    the documented sparse-capital case (Greece's MeshFilter leaves are 1
+    splat plane + 2 materialless Bulls; real geometry comes from CT)."""
     parts = [
         _part_with_material("SplatHeightDefault"),
         _part_with_material("WaterNoFoam"),
     ]
     kept = drop_splat_meshes(parts)
-    assert kept == parts
+    assert kept == []
 
 
 # --- strip_plinth_from_obj --------------------------------------------------

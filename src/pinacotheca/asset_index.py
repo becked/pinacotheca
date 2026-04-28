@@ -206,6 +206,53 @@ def _build_asset_index(entries: list[ET.Element]) -> dict[str, str]:
     return out
 
 
+def load_urban_assets(xml_dir: Path) -> list[ImprovementAsset]:
+    """
+    Discover per-nation urban-tile prefabs by scanning asset.xml directly.
+
+    Urban tiles (Greece_Urban, Egypt_Urban, etc.) are referenced from Nation
+    info at runtime (`Tile.cs:13029` `infos.nation(eNation).meUrbanAsset`)
+    rather than through an AssetVariation wrapper. They appear in `asset.xml`
+    as direct entries with `zType` of the form `ASSET_<NATION>_URBAN` and a
+    `zAsset` of `Prefabs/Cities/<Nation>/<Nation>_Urban`.
+
+    Returns the same `ImprovementAsset` shape as `load_capital_assets`. The
+    canonical name strips the `ASSET_` prefix (`ASSET_GREECE_URBAN` →
+    `GREECE_URBAN`) so output filenames are `IMPROVEMENT_3D_<NATION>_URBAN.png`.
+    """
+    if not xml_dir.exists():
+        return []
+
+    out: list[ImprovementAsset] = []
+    for entry in _load_entries(xml_dir, ASSET_FILES):
+        z_type = _entry_text(entry, "zType")
+        if not z_type:
+            continue
+        # Filter to per-nation urban entries; skip ASSET_URBAN (Primitive
+        # generic), ASSET_TERRAIN_URBAN_FLAT (terrain tile, not a nation).
+        if not z_type.startswith("ASSET_") or not z_type.endswith("_URBAN"):
+            continue
+        if z_type in ("ASSET_URBAN", "ASSET_TERRAIN_URBAN_FLAT"):
+            continue
+        path = _entry_text(entry, "zAsset")
+        if not path:
+            continue
+        prefab = path.rsplit("/", 1)[-1]
+        if not prefab:
+            continue
+        canonical = z_type.removeprefix("ASSET_")
+        out.append(
+            ImprovementAsset(
+                z_icon_name=canonical,
+                prefab_name=prefab,
+                z_type=z_type,
+                asset_z_type=z_type,
+                weight=1,
+            )
+        )
+    return out
+
+
 def load_capital_assets(xml_dir: Path) -> list[ImprovementAsset]:
     """
     Discover nation-capital prefabs by scanning the AssetVariation chain.

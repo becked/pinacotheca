@@ -13,6 +13,7 @@ from pinacotheca.asset_index import (
     ImprovementAsset,
     load_capital_assets,
     load_improvement_assets,
+    load_urban_assets,
 )
 
 
@@ -548,3 +549,110 @@ def test_capitals_skip_when_asset_missing(tmp_path: Path) -> None:
 def test_capitals_missing_xml_returns_empty(tmp_path: Path) -> None:
     result = load_capital_assets(tmp_path / "does_not_exist")
     assert result == []
+
+
+def test_urban_tiles_discovered_from_asset_xml(tmp_path: Path) -> None:
+    """Urban tiles are direct asset.xml entries (no AssetVariation wrapper).
+
+    Filters out the generic ASSET_URBAN (Primitive) and the
+    ASSET_TERRAIN_URBAN_FLAT terrain tile, both of which match the
+    ASSET_*_URBAN suffix but aren't per-nation visualizations.
+    """
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_GREECE_URBAN</zType>
+                <zAsset>Prefabs/Cities/Greece/Greece_Urban</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_EGYPT_URBAN</zType>
+                <zAsset>Prefabs/Cities/Egypt/Egypt_Urban</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_URBAN</zType>
+                <zAsset>Prefabs/Cities/Primitive/PrimitiveUrban</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_TERRAIN_URBAN_FLAT</zType>
+                <zAsset>Prefabs/Terrain/TileUrban</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    result = load_urban_assets(tmp_path)
+    by_canonical = {a.z_icon_name: a.prefab_name for a in result}
+    assert by_canonical == {
+        "GREECE_URBAN": "Greece_Urban",
+        "EGYPT_URBAN": "Egypt_Urban",
+    }
+
+
+def test_urban_tiles_dlc_files_merged(tmp_path: Path) -> None:
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_GREECE_URBAN</zType>
+                <zAsset>Prefabs/Cities/Greece/Greece_Urban</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset-eoti.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_HITTITE_URBAN</zType>
+                <zAsset>Prefabs/Cities/Hittite/Hittite_Urban</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    result = load_urban_assets(tmp_path)
+    canonical = {a.z_icon_name for a in result}
+    assert canonical == {"GREECE_URBAN", "HITTITE_URBAN"}
+
+
+def test_urban_tiles_missing_xml_returns_empty(tmp_path: Path) -> None:
+    result = load_urban_assets(tmp_path / "does_not_exist")
+    assert result == []
+
+
+def test_urban_tiles_skipped_when_zasset_missing(tmp_path: Path) -> None:
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_GREECE_URBAN</zType>
+            </Entry>
+            """
+        ),
+    )
+    assert load_urban_assets(tmp_path) == []
+
+
+def test_urban_tile_returns_full_asset_record(tmp_path: Path) -> None:
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_PERSIA_URBAN</zType>
+                <zAsset>Prefabs/Cities/Persia/Persia_Urban</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    [asset] = load_urban_assets(tmp_path)
+    assert asset == ImprovementAsset(
+        z_icon_name="PERSIA_URBAN",
+        prefab_name="Persia_Urban",
+        z_type="ASSET_PERSIA_URBAN",
+        asset_z_type="ASSET_PERSIA_URBAN",
+        weight=1,
+    )

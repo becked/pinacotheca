@@ -635,7 +635,15 @@ def extract_improvement_meshes(
             )
         return {"rendered": 0, "skipped": 0, "excluded": 0}
 
-    from pinacotheca.asset_index import load_capital_assets, load_improvement_assets
+    from pinacotheca.asset_index import (
+        load_capital_assets,
+        load_improvement_assets,
+        load_urban_assets,
+    )
+    from pinacotheca.clutter_transforms import (
+        clutter_to_prefab_parts,
+        find_clutter_transforms_in_prefab,
+    )
     from pinacotheca.prefab import (
         bake_to_obj,
         drop_splat_meshes,
@@ -671,13 +679,16 @@ def extract_improvement_meshes(
         raise FileNotFoundError(f"Could not locate Reference/XML/Infos starting from {game_data}")
     improvements = load_improvement_assets(xml_dir)
     capitals = load_capital_assets(xml_dir)
-    # Build the full job list: (prefab_name, output_name) pairs. All three
-    # sources flow into the same render path; capitals are added with their
-    # already-prefix-stripped canonical names (MAURYA_CAPITAL etc).
+    urbans = load_urban_assets(xml_dir)
+    # Build the full job list: (prefab_name, output_name) pairs. All sources
+    # flow into the same render path; capitals/urban tiles are added with
+    # their already-prefix-stripped canonical names (MAURYA_CAPITAL,
+    # GREECE_URBAN, etc).
     jobs: list[tuple[str, str]] = [
         (a.prefab_name, a.z_icon_name.removeprefix("IMPROVEMENT_")) for a in improvements
     ]
     jobs.extend((c.prefab_name, c.z_icon_name) for c in capitals)
+    jobs.extend((u.prefab_name, u.z_icon_name) for u in urbans)
     jobs.extend(SUPPLEMENTAL_PREFABS)
 
     # Stale-PNG cleanup: anything not in the new canonical set goes.
@@ -695,7 +706,8 @@ def extract_improvement_meshes(
         print(f"Loading XML chain from {xml_dir}")
         print(
             f"Discovered {len(improvements)} improvements + {len(capitals)} capitals "
-            f"via XML, +{len(SUPPLEMENTAL_PREFABS)} supplemental prefabs"
+            f"+ {len(urbans)} urban tiles via XML, +{len(SUPPLEMENTAL_PREFABS)} "
+            "supplemental prefabs"
         )
         if stale_count:
             print(f"Removed {stale_count} stale PNG(s) from previous extraction")
@@ -713,6 +725,13 @@ def extract_improvement_meshes(
             print("Loading Unity assets...")
 
         env = UnityPy.Environment()
+        # globalgamemanagers.assets carries the MonoScript objects that the
+        # ClutterTransforms walker resolves via m_Script PPtrs (file_id=1).
+        # Load it before resources.assets so its objects are reachable, but
+        # path-id collisions stay isolated: clutter mesh/material lookups
+        # are explicitly scoped to resources.assets via
+        # `clutter_transforms.find_object_by_path_id`.
+        env.load_file(str(game_data / "globalgamemanagers.assets"))
         env.load_file(str(game_data / "resources.assets"))
 
         rendered = 0
@@ -762,15 +781,48 @@ def extract_improvement_meshes(
             # Drop splat-shader meshes (heightmaps, alphamaps, water surfaces)
             # by material name.
             kept = drop_splat_meshes(lod_kept)
-            if not kept:
+
+            # Augment with ClutterTransforms-driven instance parts. Sparse
+            # capitals (Greece/Rome/Persia/Carthage/Babylonia/Assyria/Egypt)
+            # carry their building geometry here rather than in MeshFilter
+            # leaves; some urban tiles and improvements may too. This is
+            # always-additive — prefabs without a ClutterTransforms produce
+            # an empty list and behavior is unchanged.
+            clutter_parts: list[Any] = []
+            try:
+                cts = find_clutter_transforms_in_prefab(root_go)
+            except Exception as e:
+                if verbose:
+                    print(f"  [WARN] {output_name} - clutter walk failed: {e}")
+                cts = []
+            for parsed_ct, parent_world in cts:
+                try:
+                    expanded = clutter_to_prefab_parts(env, parsed_ct, parent_world)
+                except NotImplementedError as e:
+                    if verbose:
+                        print(f"  [WARN] {output_name} - clutter feature unsupported: {e}")
+                    continue
+                clutter_parts.extend(expanded)
+            if cts and verbose:
+                total_models = sum(len(p.models) for p, _ in cts)
+                total_instances = sum(
+                    sum(len(m.instances) for m in p.models) for p, _ in cts
+                )
+                print(
+                    f"  [CT] {output_name} - {len(cts)} ClutterTransforms, "
+                    f"{total_models} models, {total_instances} instances"
+                )
+
+            combined = kept + clutter_parts
+            if not combined:
                 if verbose:
                     print(f"  [SKIP] {output_name} - no usable mesh parts in prefab")
                 skipped_no_geometry += 1
                 continue
 
-            obj_str = bake_to_obj(kept, pre_rotation_y_deg=180.0)
+            obj_str = bake_to_obj(combined, pre_rotation_y_deg=180.0)
             obj_str = strip_plinth_from_obj(obj_str, cut_y_override=cut_y_override)
-            tex_img = find_diffuse_for_prefab(kept)
+            tex_img = find_diffuse_for_prefab(combined)
             if tex_img is None:
                 if verbose:
                     print(f"  [SKIP] {output_name} - no diffuse texture in prefab materials")
@@ -787,7 +839,7 @@ def extract_improvement_meshes(
                 img.save(out_path, optimize=False)
                 rendered += 1
                 if verbose:
-                    print(f"  [OK] {output_name} ({len(kept)} parts)")
+                    print(f"  [OK] {output_name} ({len(combined)} parts)")
                 del img
                 del tex_img
                 gc.collect()

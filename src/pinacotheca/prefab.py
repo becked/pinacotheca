@@ -533,7 +533,8 @@ def _is_splat_material_name(name: str) -> bool:
 
 def drop_splat_meshes(parts: list[PrefabPart]) -> list[PrefabPart]:
     """
-    Filter PrefabParts whose first material is a splat-shader material.
+    Filter PrefabParts whose first material is a splat-shader material,
+    or whose MeshRenderer has no materials at all.
 
     Catches `SplatHeightDefault`, `SplatTextureDefaultPVT`,
     `SplatClutterDefault`, and `WaterNoFoam` regardless of mesh name.
@@ -541,12 +542,21 @@ def drop_splat_meshes(parts: list[PrefabPart]) -> list[PrefabPart]:
     leaked custom-named splat meshes (`Quad`, `MarketSplat`, `HamletFloor`,
     `Maurya_PVT_Plane`, etc.).
 
-    Defensive: if the filter would drop every part of a non-empty input,
-    returns the original list unchanged. None of the curated assets trigger
-    this today; it's cheap insurance against future asset shape changes.
+    Materialless parts are also dropped: capitals carry `*Bull` GameObjects
+    that are `TerrainHeightSplat` placeholders with an empty MeshRenderer
+    materials list; the doc identifies them as no-ops the renderer should
+    skip. Without a material we'd render their flat plane with the globally
+    picked diffuse, producing a visible texture strip at ground level.
+
+    Filtering all input parts to empty is fine: callers may augment with
+    additional sources (e.g. `clutter_to_prefab_parts` for sparse capitals
+    whose only MeshFilter leaves are splat planes + materialless Bulls).
+    The downstream `if not combined` skip still catches truly-empty cases.
     """
     kept: list[PrefabPart] = []
     for part in parts:
+        if not part.materials:
+            continue
         is_splat = False
         for mat_pptr in part.materials:
             try:
@@ -562,8 +572,6 @@ def drop_splat_meshes(parts: list[PrefabPart]) -> list[PrefabPart]:
         if not is_splat:
             kept.append(part)
 
-    if parts and not kept:
-        return parts
     return kept
 
 
