@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 from collections import deque
-from pathlib import Path
 from typing import Any
 
 import UnityPy
@@ -27,7 +26,7 @@ CANDIDATES = [
 ]
 
 
-def find_transform(go: Any, env: Any) -> Any | None:
+def find_transform(go: Any) -> Any | None:
     comps = getattr(go, "m_Component", None) or []
     for entry in comps:
         # ComponentPair (newer) has .component; old format is (class_id, PPtr)
@@ -97,7 +96,7 @@ def main() -> None:
         # For each GO, find Transform and walk its tree
         for i, go in enumerate(gos[:2]):  # only first 2 instances
             print(f"  [GO #{i}]")
-            t = find_transform(go, env)
+            t = find_transform(go)
             if t is None:
                 print("    no Transform")
                 continue
@@ -145,7 +144,7 @@ def main() -> None:
                         if v is None:
                             return "?"
                         try:
-                            return f"({v.x:+.2f},{v.y:+.2f},{v.z:+.2f}{(',w='+f'{v.w:+.2f}') if hasattr(v,'w') else ''})"
+                            return f"({v.x:+.2f},{v.y:+.2f},{v.z:+.2f}{(',w=' + f'{v.w:+.2f}') if hasattr(v, 'w') else ''})"
                         except Exception:
                             return str(v)
 

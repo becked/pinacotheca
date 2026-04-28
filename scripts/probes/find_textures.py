@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
 
 import UnityPy
 
@@ -85,7 +84,10 @@ def main() -> None:
             for tok in re.findall(r"[A-Za-z]+", base):
                 if len(tok) >= 4 and tok.lower() in name.lower():
                     score += 2
-            if any(s in name.lower() for s in ("_diffuse", "_albedo", "_basecolor", "_color", "_d.", "_d_")):
+            if any(
+                s in name.lower()
+                for s in ("_diffuse", "_albedo", "_basecolor", "_color", "_d.", "_d_")
+            ):
                 score += 3
             if score > 0:
                 candidates.append((name, w, h, score))

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from collections import Counter
 from pathlib import Path
 
@@ -35,28 +34,84 @@ def classify(name: str) -> str:
 
     # Buildings / improvements
     building_kw = (
-        "library", "barracks", "shrine", "temple", "palace", "forum",
-        "market", "monument", "garden", "wonder", "theater", "amphitheater",
-        "harbor", "lighthouse", "academy", "court", "shipwright", "stable",
-        "armory", "wall", "gate", "tower", "tomb", "bath", "aqueduct",
-        "obelisk", "pyramid", "ziggurat", "sanctuary", "altar",
+        "library",
+        "barracks",
+        "shrine",
+        "temple",
+        "palace",
+        "forum",
+        "market",
+        "monument",
+        "garden",
+        "wonder",
+        "theater",
+        "amphitheater",
+        "harbor",
+        "lighthouse",
+        "academy",
+        "court",
+        "shipwright",
+        "stable",
+        "armory",
+        "wall",
+        "gate",
+        "tower",
+        "tomb",
+        "bath",
+        "aqueduct",
+        "obelisk",
+        "pyramid",
+        "ziggurat",
+        "sanctuary",
+        "altar",
     )
     if any(k in n for k in building_kw):
         return "urban_improvement"
 
     rural_kw = (
-        "farm", "pasture", "lumbermill", "lumber_mill", "mine", "quarry",
-        "watermill", "water_mill", "windmill", "wind_mill", "orchard",
-        "vineyard", "fishing", "hunting", "camp", "outpost", "trading",
-        "brickworks", "kiln", "stoneworks", "ironworks", "olive", "wheat",
+        "farm",
+        "pasture",
+        "lumbermill",
+        "lumber_mill",
+        "mine",
+        "quarry",
+        "watermill",
+        "water_mill",
+        "windmill",
+        "wind_mill",
+        "orchard",
+        "vineyard",
+        "fishing",
+        "hunting",
+        "camp",
+        "outpost",
+        "trading",
+        "brickworks",
+        "kiln",
+        "stoneworks",
+        "ironworks",
+        "olive",
+        "wheat",
     )
     if any(k in n for k in rural_kw):
         return "rural_improvement"
 
     # Tile / terrain features
     terrain_kw = (
-        "tree", "rock", "cliff", "river", "hill", "mountain", "forest",
-        "desert", "tundra", "jungle", "ocean", "lake", "tile_", "_tile",
+        "tree",
+        "rock",
+        "cliff",
+        "river",
+        "hill",
+        "mountain",
+        "forest",
+        "desert",
+        "tundra",
+        "jungle",
+        "ocean",
+        "lake",
+        "tile_",
+        "_tile",
     )
     if any(k in n for k in terrain_kw):
         return "terrain"
@@ -101,12 +156,14 @@ def main() -> None:
             vertex_count = getattr(data, "m_VertexCount", None)
             sub_meshes = getattr(data, "m_SubMeshes", None)
             sub_count = len(sub_meshes) if sub_meshes is not None else None
-            meshes.append({
-                "name": name,
-                "vertices": vertex_count,
-                "submeshes": sub_count,
-                "category": classify(name),
-            })
+            meshes.append(
+                {
+                    "name": name,
+                    "vertices": vertex_count,
+                    "submeshes": sub_count,
+                    "category": classify(name),
+                }
+            )
         except Exception:
             unreadable += 1
 
