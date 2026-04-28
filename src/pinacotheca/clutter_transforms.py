@@ -520,9 +520,7 @@ def clutter_to_prefab_parts(
             logger.debug("Clutter mesh PPtr did not resolve: %s", model.mesh)
             continue
         if mesh_reader.type.name != "Mesh":
-            logger.debug(
-                "Clutter mesh PPtr resolved to %s, not Mesh", mesh_reader.type.name
-            )
+            logger.debug("Clutter mesh PPtr resolved to %s, not Mesh", mesh_reader.type.name)
             continue
 
         if not parsed.override_material.is_null():

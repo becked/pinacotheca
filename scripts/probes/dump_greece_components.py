@@ -65,18 +65,26 @@ def script_class_from_typetree(reader: Any) -> str:
         if file_id == 0:
             target = assets_file.files.get(path_id) if hasattr(assets_file, "files") else None
             if target is None:
-                target = assets_file.objects.get(path_id) if hasattr(assets_file, "objects") else None
+                target = (
+                    assets_file.objects.get(path_id) if hasattr(assets_file, "objects") else None
+                )
         else:
             ext = assets_file.externals[file_id - 1]
             ext_file = ext.assets_file if hasattr(ext, "assets_file") else None
             if ext_file is not None:
-                target = ext_file.files.get(path_id) if hasattr(ext_file, "files") else ext_file.objects.get(path_id)
+                target = (
+                    ext_file.files.get(path_id)
+                    if hasattr(ext_file, "files")
+                    else ext_file.objects.get(path_id)
+                )
             else:
                 return f"<extern fileID={file_id}>"
         if target is None:
             return f"<not found pathID={path_id}>"
         script_obj = target.parse_as_object()
-        return getattr(script_obj, "m_ClassName", None) or getattr(script_obj, "m_Name", None) or "?"
+        return (
+            getattr(script_obj, "m_ClassName", None) or getattr(script_obj, "m_Name", None) or "?"
+        )
     except Exception as e:
         return f"<resolve err: {type(e).__name__}: {e}>"
 

@@ -360,11 +360,21 @@ def main() -> None:
                     if cls == "TerrainTexturePVTSplat":
                         f = parse_pvt_splat(raw)
                         print(f"    sortingOffset={f.sorting_offset}")
-                        print(f"    packInAtlas={f.pack_in_atlas}  useSimpleMode={f.use_simple_mode}")
-                        print(f"    materialTiling={f.material_tiling:.3f}  useWorldUVs={f.material_use_world_uvs}")
-                        print(f"    albedoTint=({f.albedo_tint[0]:.2f},{f.albedo_tint[1]:.2f},{f.albedo_tint[2]:.2f},{f.albedo_tint[3]:.2f})")
-                        print(f"    normalIntensity={f.normal_map_intensity:.2f}  metallic={f.metallic:.2f}  roughness={f.roughness:.2f}")
-                        print(f"    alphaMapChannel={f.alpha_map_channel}  atlasIndex={f.atlas_index}")
+                        print(
+                            f"    packInAtlas={f.pack_in_atlas}  useSimpleMode={f.use_simple_mode}"
+                        )
+                        print(
+                            f"    materialTiling={f.material_tiling:.3f}  useWorldUVs={f.material_use_world_uvs}"
+                        )
+                        print(
+                            f"    albedoTint=({f.albedo_tint[0]:.2f},{f.albedo_tint[1]:.2f},{f.albedo_tint[2]:.2f},{f.albedo_tint[3]:.2f})"
+                        )
+                        print(
+                            f"    normalIntensity={f.normal_map_intensity:.2f}  metallic={f.metallic:.2f}  roughness={f.roughness:.2f}"
+                        )
+                        print(
+                            f"    alphaMapChannel={f.alpha_map_channel}  atlasIndex={f.atlas_index}"
+                        )
                         for label, pp in [
                             ("material", f.material),
                             ("albedoMap", f.albedo_map),
@@ -380,12 +390,20 @@ def main() -> None:
                             if name:
                                 print(f"    {label}: {name}  (fid={pp.file_id} pid={pp.path_id})")
                             elif not pp.is_null():
-                                print(f"    {label}: <unresolved> (fid={pp.file_id} pid={pp.path_id})")
+                                print(
+                                    f"    {label}: <unresolved> (fid={pp.file_id} pid={pp.path_id})"
+                                )
                     else:  # TerrainHeightSplat
                         h = parse_height_splat(raw)
-                        print(f"    sortingOffset={h.sorting_offset}  useSimpleMode={h.use_simple_mode}")
-                        print(f"    intensity={h.intensity:.3f}  tiling={h.tiling:.3f}  middle={h.rgb_heightmap_middle:.3f}")
-                        print(f"    overrideWorldUV={h.override_world_uv}  alphamapScaleBias={h.alphamap_scale_bias}")
+                        print(
+                            f"    sortingOffset={h.sorting_offset}  useSimpleMode={h.use_simple_mode}"
+                        )
+                        print(
+                            f"    intensity={h.intensity:.3f}  tiling={h.tiling:.3f}  middle={h.rgb_heightmap_middle:.3f}"
+                        )
+                        print(
+                            f"    overrideWorldUV={h.override_world_uv}  alphamapScaleBias={h.alphamap_scale_bias}"
+                        )
                         for label, pp in [
                             ("material", h.material),
                             ("rgbHeightmap", h.rgb_heightmap),
@@ -395,7 +413,9 @@ def main() -> None:
                             if name:
                                 print(f"    {label}: {name}  (fid={pp.file_id} pid={pp.path_id})")
                             elif not pp.is_null():
-                                print(f"    {label}: <unresolved> (fid={pp.file_id} pid={pp.path_id})")
+                                print(
+                                    f"    {label}: <unresolved> (fid={pp.file_id} pid={pp.path_id})"
+                                )
                 except Exception as e:
                     print(f"    PARSE FAIL: {type(e).__name__}: {e}")
 

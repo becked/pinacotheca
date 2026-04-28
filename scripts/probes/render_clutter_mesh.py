@@ -106,6 +106,7 @@ def main() -> None:
                 print(f"  material '{mat_name}' has no diffuse texture")
                 continue
             from pinacotheca.prefab import _decode_texture
+
             tex_img = _decode_texture(tex_obj)
             if tex_img is None:
                 print("  texture decode failed")
@@ -147,7 +148,9 @@ def main() -> None:
             out_path = out_dir / f"{capital}_{mesh_name.replace('.', '_')}.png"
             img.save(out_path)
             tex_w, tex_h = tex_img.size
-            print(f"  ok: rendered ({img.size[0]}x{img.size[1]}, texture {tex_w}x{tex_h}) → {out_path.name}")
+            print(
+                f"  ok: rendered ({img.size[0]}x{img.size[1]}, texture {tex_w}x{tex_h}) → {out_path.name}"
+            )
         except Exception as e:
             print(f"  render failed: {type(e).__name__}: {e}")
 

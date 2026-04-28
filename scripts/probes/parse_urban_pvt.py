@@ -21,9 +21,7 @@ import UnityPy
 from pinacotheca.extractor import find_game_data
 from pinacotheca.prefab import _components_of, find_root_gameobject
 
-sys.path.insert(
-    0, str(__file__).rsplit("/", 1)[0]
-)
+sys.path.insert(0, str(__file__).rsplit("/", 1)[0])
 from parse_pvt_splat_binary import (  # type: ignore
     parse_height_splat,
     parse_pvt_splat,

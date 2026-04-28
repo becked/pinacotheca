@@ -805,9 +805,7 @@ def extract_improvement_meshes(
                 clutter_parts.extend(expanded)
             if cts and verbose:
                 total_models = sum(len(p.models) for p, _ in cts)
-                total_instances = sum(
-                    sum(len(m.instances) for m in p.models) for p, _ in cts
-                )
+                total_instances = sum(sum(len(m.instances) for m in p.models) for p, _ in cts)
                 print(
                     f"  [CT] {output_name} - {len(cts)} ClutterTransforms, "
                     f"{total_models} models, {total_instances} instances"

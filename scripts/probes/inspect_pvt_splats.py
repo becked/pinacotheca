@@ -170,9 +170,7 @@ def main() -> None:
     env = UnityPy.Environment()
     env.load_file(str(game_data / "resources.assets"))
 
-    all_prefabs = [("CAPITAL", n) for n in CAPITAL_PREFABS] + [
-        ("URBAN", n) for n in URBAN_PREFABS
-    ]
+    all_prefabs = [("CAPITAL", n) for n in CAPITAL_PREFABS] + [("URBAN", n) for n in URBAN_PREFABS]
 
     typetree_attempts: list[tuple[str, str, bool, str]] = []
     atlas_hits: list[tuple[str, str, str]] = []  # (prefab, plane_name, why)
