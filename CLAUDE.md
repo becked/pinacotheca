@@ -80,7 +80,6 @@ docs/                 # Investigation writeups, feature requests, references
 ├── extracting-game-assets-from-unity-with-python.md
 ├── atlas-reference.md
 ├── improvement-naming-alignment.md       # Canonical zIconName follow-up effort
-├── feature-request-per-ankh-map-atlas.md # Downstream consumer requirements
 └── runtime-composed-cities.md            # ClutterTransforms parser for sparse capitals + urban tiles
 
 web/                  # SvelteKit gallery (primary web interface)
@@ -271,7 +270,7 @@ The PVT (procedural virtual texturing) terrain layer — per-nation dirt pattern
 
 The 3D improvement renders are consumed by external tools that scan the filesystem rather than parsing a manifest:
 
-- **per-ankh** (hex-based map renderer) — bakes our `IMPROVEMENT_3D_*.png` outputs into atlases for its map view. Looks up by `(tile.improvement, owner.family)` keyed on the game's canonical `zIconName`. Since the XML-driven discovery + ClutterTransforms work, our filenames match canonical zIconName directly and the catalog covers ~141 outputs (essentially everything per-ankh asked for; see `docs/feature-request-per-ankh-map-atlas.md` for the original requirements).
+- **per-ankh** (hex-based map renderer) — bakes our `IMPROVEMENT_3D_*.png` outputs into atlases for its map view. Looks up by `(tile.improvement, owner.family)` keyed on the game's canonical `zIconName`. Filenames match canonical zIconName directly (XML-driven discovery + ClutterTransforms work); catalog covers ~141 outputs.
 - **SvelteKit gallery** (`web/`) — `generate-manifest.ts` scans `extracted/sprites/` at build time and emits `manifest.json`. New PNGs auto-appear; no code changes needed.
 
 **API surface**: PNG filenames in `extracted/sprites/improvements/IMPROVEMENT_3D_<NAME>.png`. Renames are breaking changes; coordinate with per-ankh before renaming. The naming-alignment doc proposes a future major version bump that aligns all names to canonical zIconName at once.
