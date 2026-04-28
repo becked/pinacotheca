@@ -638,6 +638,7 @@ def extract_improvement_meshes(
     from pinacotheca.asset_index import (
         load_capital_assets,
         load_improvement_assets,
+        load_resource_assets,
         load_urban_assets,
     )
     from pinacotheca.clutter_transforms import (
@@ -662,8 +663,10 @@ def extract_improvement_meshes(
     if output_dir is None:
         output_dir = Path.cwd() / "extracted"
 
-    sprites_dir = output_dir / "sprites" / "improvements"
-    sprites_dir.mkdir(parents=True, exist_ok=True)
+    improvements_dir = output_dir / "sprites" / "improvements"
+    resources_dir = output_dir / "sprites" / "resources"
+    improvements_dir.mkdir(parents=True, exist_ok=True)
+    resources_dir.mkdir(parents=True, exist_ok=True)
 
     # Resolve the XML chain. Reference/XML/Infos lives at the game's
     # install root, which is several directories up from the Data dir
@@ -680,24 +683,44 @@ def extract_improvement_meshes(
     improvements = load_improvement_assets(xml_dir)
     capitals = load_capital_assets(xml_dir)
     urbans = load_urban_assets(xml_dir)
-    # Build the full job list: (prefab_name, output_name) pairs. All sources
-    # flow into the same render path; capitals/urban tiles are added with
-    # their already-prefix-stripped canonical names (MAURYA_CAPITAL,
-    # GREECE_URBAN, etc).
-    jobs: list[tuple[str, str]] = [
-        (a.prefab_name, a.z_icon_name.removeprefix("IMPROVEMENT_")) for a in improvements
+    resources = load_resource_assets(xml_dir)
+    # Build the full job list. Each job is (prefab_name, output_name,
+    # output_dir, filename_prefix). Improvements/capitals/urbans/supplemental
+    # render to sprites/improvements/IMPROVEMENT_3D_*.png; resources render to
+    # sprites/resources/RESOURCE_3D_*.png. Resources are tile-level decorations
+    # (animals, crops, ore deposits) the game composites independently of the
+    # improvement that may sit on top.
+    jobs: list[tuple[str, str, Path, str]] = [
+        (
+            a.prefab_name,
+            a.z_icon_name.removeprefix("IMPROVEMENT_"),
+            improvements_dir,
+            "IMPROVEMENT_3D_",
+        )
+        for a in improvements
     ]
-    jobs.extend((c.prefab_name, c.z_icon_name) for c in capitals)
-    jobs.extend((u.prefab_name, u.z_icon_name) for u in urbans)
-    jobs.extend(SUPPLEMENTAL_PREFABS)
+    jobs.extend(
+        (c.prefab_name, c.z_icon_name, improvements_dir, "IMPROVEMENT_3D_") for c in capitals
+    )
+    jobs.extend((u.prefab_name, u.z_icon_name, improvements_dir, "IMPROVEMENT_3D_") for u in urbans)
+    jobs.extend(
+        (prefab, output_name, improvements_dir, "IMPROVEMENT_3D_")
+        for prefab, output_name in SUPPLEMENTAL_PREFABS
+    )
+    jobs.extend(
+        (r.prefab_name, r.z_icon_name.removeprefix("RESOURCE_"), resources_dir, "RESOURCE_3D_")
+        for r in resources
+    )
 
-    # Stale-PNG cleanup: anything not in the new canonical set goes.
-    canonical_filenames = {f"IMPROVEMENT_3D_{out}.png" for _, out in jobs}
+    # Stale-PNG cleanup: per (output_dir, prefix) bucket, anything not in the
+    # new canonical set goes.
     stale_count = 0
-    for existing in sprites_dir.glob("IMPROVEMENT_3D_*.png"):
-        if existing.name not in canonical_filenames:
-            existing.unlink()
-            stale_count += 1
+    for out_dir, prefix in {(d, p) for _, _, d, p in jobs}:
+        canonical = {f"{prefix}{out}.png" for _, out, d, p in jobs if d == out_dir and p == prefix}
+        for existing in out_dir.glob(f"{prefix}*.png"):
+            if existing.name not in canonical:
+                existing.unlink()
+                stale_count += 1
 
     if verbose:
         print("\n" + "=" * 60)
@@ -706,8 +729,8 @@ def extract_improvement_meshes(
         print(f"Loading XML chain from {xml_dir}")
         print(
             f"Discovered {len(improvements)} improvements + {len(capitals)} capitals "
-            f"+ {len(urbans)} urban tiles via XML, +{len(SUPPLEMENTAL_PREFABS)} "
-            "supplemental prefabs"
+            f"+ {len(urbans)} urban tiles + {len(resources)} resources via XML, "
+            f"+{len(SUPPLEMENTAL_PREFABS)} supplemental prefabs"
         )
         if stale_count:
             print(f"Removed {stale_count} stale PNG(s) from previous extraction")
@@ -740,14 +763,14 @@ def extract_improvement_meshes(
         skipped_no_geometry = 0
         render_errors = 0
 
-        for prefab_name, output_name in jobs:
+        for prefab_name, output_name, job_out_dir, job_prefix in jobs:
             if exclude_pattern and exclude_pattern.search(output_name):
                 excluded_count += 1
                 if verbose:
                     print(f"  [EXCLUDED] {output_name}")
                 continue
 
-            out_path = sprites_dir / f"IMPROVEMENT_3D_{output_name}.png"
+            out_path = job_out_dir / f"{job_prefix}{output_name}.png"
             if out_path.exists():
                 if verbose:
                     print(f"  [EXISTS] {output_name}")
@@ -860,7 +883,7 @@ def extract_improvement_meshes(
             )
             if excluded_count > 0:
                 print(f"Excluded by pattern: {excluded_count}")
-            print(f"Output: {sprites_dir}")
+            print(f"Output: {improvements_dir}, {resources_dir}")
 
         return {"rendered": rendered, "skipped": skipped, "excluded": excluded_count}
 

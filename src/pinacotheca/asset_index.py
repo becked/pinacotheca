@@ -37,6 +37,12 @@ IMPROVEMENT_FILES: tuple[str, ...] = (
     "improvement.xml",
     "improvement-event.xml",
 )
+RESOURCE_FILES: tuple[str, ...] = (
+    "resource.xml",
+    "resource-btt.xml",
+    "resource-eoti.xml",
+    "resource-wd.xml",
+)
 ASSET_VARIATION_FILES: tuple[str, ...] = (
     "assetVariation.xml",
     "assetVariation-btt.xml",
@@ -203,6 +209,118 @@ def _build_asset_index(entries: list[ET.Element]) -> dict[str, str]:
             logger.debug("Asset %s has empty prefab name (zAsset=%r)", z_type, path)
             continue
         out[z_type] = prefab
+    return out
+
+
+@dataclass(frozen=True)
+class _ResourceEntry:
+    z_type: str  # RESOURCE_ORE
+    z_icon_name: str  # RESOURCE_IRON (often differs from z_type — alias to a shared visual)
+    asset_variation: str  # ASSET_VARIATION_RESOURCE_ORE
+
+
+def _build_resource_entries(entries: list[ET.Element]) -> list[_ResourceEntry]:
+    """Parse resource.xml entries with their AssetVariation and zIconName.
+
+    Same shape as `_build_improvement_entries`. Resources alias to a
+    shared visual via `<zIconName>` (RESOURCE_ORE → RESOURCE_IRON,
+    RESOURCE_MARBLE → RESOURCE_STONE) — multiple zTypes may share an
+    icon name. When `<zIconName>` is missing we fall back to `<zType>`.
+    """
+    out: list[_ResourceEntry] = []
+    for entry in entries:
+        z_type = _entry_text(entry, "zType")
+        if not z_type:
+            continue
+        asset_var = _entry_text(entry, "AssetVariation")
+        if not asset_var:
+            logger.debug("Resource %s has no AssetVariation; skipping", z_type)
+            continue
+        z_icon_name = _entry_text(entry, "zIconName") or z_type
+        out.append(
+            _ResourceEntry(
+                z_type=z_type,
+                z_icon_name=z_icon_name,
+                asset_variation=asset_var,
+            )
+        )
+    return out
+
+
+def load_resource_assets(xml_dir: Path) -> list[ImprovementAsset]:
+    """
+    Walk resource.xml → assetVariation.xml → asset.xml and return one
+    `ImprovementAsset` per unique resource zIconName.
+
+    Resources are tile-level decorations spawned by `ResourceRenderer.cs`
+    independently of improvements. The Pasture *fence* lives in the
+    improvement prefab; the herd of horses/sheep on the tile under it
+    lives in `Prefabs/Resource/<animal>`. Without this loader those
+    resource prefabs aren't extracted.
+
+    Returns the same `ImprovementAsset` shape as `load_improvement_assets`
+    so callers can use a single render pipeline. Output filenames built
+    from `z_icon_name` (canonical) — the existing dedupe pattern.
+
+    Skips entries whose zType is not in the per-ankh-relevant set is NOT
+    done here; we extract every resource the chain resolves and let the
+    consumer decide which to use. This mirrors how improvements are
+    handled.
+    """
+    if not xml_dir.exists():
+        logger.warning("XML directory not found: %s", xml_dir)
+        return []
+
+    resource_entries = _build_resource_entries(_load_entries(xml_dir, RESOURCE_FILES))
+    variations = _build_variation_index(_load_entries(xml_dir, ASSET_VARIATION_FILES))
+    assets = _build_asset_index(_load_entries(xml_dir, ASSET_FILES))
+
+    seen_icons: set[str] = set()
+    out: list[ImprovementAsset] = []
+    skipped_no_variation = 0
+    skipped_no_asset = 0
+    skipped_duplicate_icon = 0
+
+    for entry in resource_entries:
+        if entry.z_icon_name in seen_icons:
+            skipped_duplicate_icon += 1
+            continue
+        variation = variations.get(entry.asset_variation)
+        if variation is None:
+            logger.debug("%s → %s: variation not found", entry.z_type, entry.asset_variation)
+            skipped_no_variation += 1
+            continue
+        best_asset_z, best_weight = max(variation.candidates, key=lambda c: c[1])
+        prefab = assets.get(best_asset_z)
+        if not prefab:
+            logger.debug(
+                "%s → %s → %s: asset not found",
+                entry.z_type,
+                entry.asset_variation,
+                best_asset_z,
+            )
+            skipped_no_asset += 1
+            continue
+        seen_icons.add(entry.z_icon_name)
+        out.append(
+            ImprovementAsset(
+                z_icon_name=entry.z_icon_name,
+                prefab_name=prefab,
+                z_type=entry.z_type,
+                asset_z_type=best_asset_z,
+                weight=best_weight,
+            )
+        )
+
+    if skipped_no_variation or skipped_no_asset or skipped_duplicate_icon:
+        logger.info(
+            "load_resource_assets: %d resolved, %d no-variation, %d no-asset, %d duplicate-icon",
+            len(out),
+            skipped_no_variation,
+            skipped_no_asset,
+            skipped_duplicate_icon,
+        )
+
     return out
 
 

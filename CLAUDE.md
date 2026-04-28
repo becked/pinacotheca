@@ -104,10 +104,10 @@ web/                  # SvelteKit gallery (primary web interface)
 - **`extractor.py`**: Three extraction entry points called in sequence by `pinacotheca`:
   - `extract_sprites()` — 2D sprite extraction (the original 4000+ icon set)
   - `extract_unit_meshes()` — 3D unit mesh renders (`UNIT_3D_*.png`)
-  - `extract_improvement_meshes()` — 3D improvement renders (`IMPROVEMENT_3D_*.png`); discovers the asset list at runtime from the game's XML chain via `asset_index.py`. Includes a small `SUPPLEMENTAL_PREFABS` list for things not in `improvement.xml` (currently only the four pyramid construction stages) and `PREFAB_DECODE_BLACKLIST` for prefabs whose Texture2D decode SIGSEGVs UnityPy.
+  - `extract_improvement_meshes()` — 3D improvement renders (`IMPROVEMENT_3D_*.png` for improvements/capitals/urbans, `RESOURCE_3D_*.png` for resources). Discovers the asset list at runtime from the game's XML chain via `asset_index.py`. Includes a small `SUPPLEMENTAL_PREFABS` list for things not in `improvement.xml` (currently only the four pyramid construction stages) and `PREFAB_DECODE_BLACKLIST` for prefabs whose Texture2D decode SIGSEGVs UnityPy. Resources are tile-level decorations (animals, crops, ore deposits) the game composites independently of the improvement on top — the Pasture *fence* lives in the improvement prefab; the herd of horses/sheep/cattle on the tile under it lives in `Prefabs/Resource/<animal>`.
   - Auto-detects game installation path on macOS and Windows.
 
-- **`asset_index.py`**: Pure-Python parser for the game's XML asset chain (`improvement.xml` → `assetVariation.xml` → `asset.xml`, plus DLC variants). `load_improvement_assets()` returns one `ImprovementAsset` per unique `zIconName` from improvement.xml; `load_capital_assets()` does the same for `ASSET_VARIATION_CITY_*_CAPITAL` entries (which aren't in improvement.xml). No UnityPy dependency.
+- **`asset_index.py`**: Pure-Python parser for the game's XML asset chain (`improvement.xml` → `assetVariation.xml` → `asset.xml`, plus DLC variants). `load_improvement_assets()` returns one `ImprovementAsset` per unique `zIconName` from improvement.xml; `load_capital_assets()` does the same for `ASSET_VARIATION_CITY_*_CAPITAL` entries; `load_urban_assets()` for per-nation `ASSET_<NATION>_URBAN`; `load_resource_assets()` walks `resource.xml` for tile resources (Horse, Sheep, Wheat, Iron, …). All four return the same `ImprovementAsset` shape so callers can use one render pipeline. No UnityPy dependency.
 
 - **`prefab.py`**: Unity GameObject/Transform tree walker. Key functions:
   - `walk_prefab(root_go)` — recurse the tree, collect MeshFilter leaves with baked world matrices
@@ -141,10 +141,12 @@ extracted/
 ├── _app/             # SvelteKit assets (JS, CSS)
 ├── robots.txt        # Search engine config
 └── sprites/
-    ├── portraits/    # Character portraits by nation
-    ├── units/        # Military unit icons
-    ├── crests/       # Nation/family emblems
-    └── ...           # ~40 categories total
+    ├── portraits/      # Character portraits by nation
+    ├── units/          # Military unit icons
+    ├── crests/         # Nation/family emblems
+    ├── improvements/   # IMPROVEMENT_3D_*.png (buildings, capitals, urban tiles)
+    ├── resources/      # RESOURCE_3D_*.png (tile resources — animals, crops, ores)
+    └── ...             # ~40 categories total
 ```
 
 ## Testing
@@ -270,7 +272,7 @@ The PVT (procedural virtual texturing) terrain layer — per-nation dirt pattern
 
 The 3D improvement renders are consumed by external tools that scan the filesystem rather than parsing a manifest:
 
-- **per-ankh** (hex-based map renderer) — bakes our `IMPROVEMENT_3D_*.png` outputs into atlases for its map view. Looks up by `(tile.improvement, owner.family)` keyed on the game's canonical `zIconName`. Filenames match canonical zIconName directly (XML-driven discovery + ClutterTransforms work); catalog covers ~141 outputs.
+- **per-ankh** (hex-based map renderer) — bakes our `IMPROVEMENT_3D_*.png` (and now `RESOURCE_3D_*.png`) outputs into atlases for its map view. Looks up improvements by `(tile.improvement, owner.family)` and resources by `tile.resource`, keyed on the game's canonical `zIconName`. Filenames match canonical zIconName directly.
 - **SvelteKit gallery** (`web/`) — `generate-manifest.ts` scans `extracted/sprites/` at build time and emits `manifest.json`. New PNGs auto-appear; no code changes needed.
 
-**API surface**: PNG filenames in `extracted/sprites/improvements/IMPROVEMENT_3D_<NAME>.png`. Renames are breaking changes; coordinate with per-ankh before renaming. The naming-alignment doc proposes a future major version bump that aligns all names to canonical zIconName at once.
+**API surface**: PNG filenames in `extracted/sprites/improvements/IMPROVEMENT_3D_<NAME>.png` and `extracted/sprites/resources/RESOURCE_3D_<NAME>.png`. Renames are breaking changes; coordinate with per-ankh before renaming. The naming-alignment doc proposes a future major version bump that aligns all names to canonical zIconName at once.

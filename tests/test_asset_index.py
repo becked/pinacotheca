@@ -13,6 +13,7 @@ from pinacotheca.asset_index import (
     ImprovementAsset,
     load_capital_assets,
     load_improvement_assets,
+    load_resource_assets,
     load_urban_assets,
 )
 
@@ -656,3 +657,321 @@ def test_urban_tile_returns_full_asset_record(tmp_path: Path) -> None:
         asset_z_type="ASSET_PERSIA_URBAN",
         weight=1,
     )
+
+
+# --- load_resource_assets ----------------------------------------------------
+
+
+def test_resource_single_asset_chain_resolves(tmp_path: Path) -> None:
+    _write(
+        tmp_path / "resource.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>RESOURCE_CATTLE</zType>
+                <zIconName>RESOURCE_CATTLE</zIconName>
+                <AssetVariation>ASSET_VARIATION_RESOURCE_CATTLE</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_RESOURCE_CATTLE</zType>
+                <SingleAsset>ASSET_RESOURCE_CATTLE</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_RESOURCE_CATTLE</zType>
+                <zAsset>Prefabs/Resource/Cattle</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    [asset] = load_resource_assets(tmp_path)
+    assert asset == ImprovementAsset(
+        z_icon_name="RESOURCE_CATTLE",
+        prefab_name="Cattle",
+        z_type="RESOURCE_CATTLE",
+        asset_z_type="ASSET_RESOURCE_CATTLE",
+        weight=1,
+    )
+
+
+def test_resource_z_icon_name_aliases_to_shared_visual(tmp_path: Path) -> None:
+    """RESOURCE_ORE has zIconName=RESOURCE_IRON — output filename uses
+    RESOURCE_IRON (canonical icon), but the chain follows
+    ASSET_VARIATION_RESOURCE_ORE."""
+    _write(
+        tmp_path / "resource.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>RESOURCE_ORE</zType>
+                <zIconName>RESOURCE_IRON</zIconName>
+                <AssetVariation>ASSET_VARIATION_RESOURCE_ORE</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_RESOURCE_ORE</zType>
+                <SingleAsset>ASSET_RESOURCE_IRON</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_RESOURCE_IRON</zType>
+                <zAsset>Prefabs/Resource/Iron</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    [asset] = load_resource_assets(tmp_path)
+    assert asset.z_icon_name == "RESOURCE_IRON"
+    assert asset.z_type == "RESOURCE_ORE"
+    assert asset.prefab_name == "Iron"
+
+
+def test_resource_random_assets_picks_highest_weight(tmp_path: Path) -> None:
+    """RESOURCE_HORSE uses aiRandomAssets (Horse_01 weight 6, Horse_02 weight 4).
+    The loader picks the highest-weighted candidate, mirroring improvements."""
+    _write(
+        tmp_path / "resource.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>RESOURCE_HORSE</zType>
+                <zIconName>RESOURCE_HORSE</zIconName>
+                <AssetVariation>ASSET_VARIATION_RESOURCE_HORSE</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_RESOURCE_HORSE</zType>
+                <aiRandomAssets>
+                    <Pair>
+                        <zIndex>ASSET_RESOURCE_HORSE_01</zIndex>
+                        <iValue>6</iValue>
+                    </Pair>
+                    <Pair>
+                        <zIndex>ASSET_RESOURCE_HORSE_02</zIndex>
+                        <iValue>4</iValue>
+                    </Pair>
+                </aiRandomAssets>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_RESOURCE_HORSE_01</zType>
+                <zAsset>Prefabs/Resource/Horse_Variation/Horse_01</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_RESOURCE_HORSE_02</zType>
+                <zAsset>Prefabs/Resource/Horse_Variation/Horse_02</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    [asset] = load_resource_assets(tmp_path)
+    assert asset.prefab_name == "Horse_01"
+    assert asset.weight == 6
+
+
+def test_resource_dlc_files_merge(tmp_path: Path) -> None:
+    """DLC additions (resource-eoti.xml etc.) merge with the base file."""
+    _write(
+        tmp_path / "resource.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>RESOURCE_CATTLE</zType>
+                <AssetVariation>ASSET_VARIATION_RESOURCE_CATTLE</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "resource-eoti.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>RESOURCE_JADE</zType>
+                <AssetVariation>ASSET_VARIATION_RESOURCE_JADE</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_RESOURCE_CATTLE</zType>
+                <SingleAsset>ASSET_RESOURCE_CATTLE</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_RESOURCE_JADE</zType>
+                <SingleAsset>ASSET_RESOURCE_JADE</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_RESOURCE_CATTLE</zType>
+                <zAsset>Prefabs/Resource/Cattle</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_RESOURCE_JADE</zType>
+                <zAsset>Prefabs/Resource/Jade</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    result = load_resource_assets(tmp_path)
+    assert {a.z_type for a in result} == {"RESOURCE_CATTLE", "RESOURCE_JADE"}
+
+
+def test_resource_dedupe_by_z_icon_name(tmp_path: Path) -> None:
+    """Multiple zTypes sharing one zIconName collapse to a single record."""
+    _write(
+        tmp_path / "resource.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>RESOURCE_ORE</zType>
+                <zIconName>RESOURCE_IRON</zIconName>
+                <AssetVariation>ASSET_VARIATION_RESOURCE_ORE</AssetVariation>
+            </Entry>
+            <Entry>
+                <zType>RESOURCE_IRON_DUPLICATE</zType>
+                <zIconName>RESOURCE_IRON</zIconName>
+                <AssetVariation>ASSET_VARIATION_RESOURCE_DUP</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_RESOURCE_ORE</zType>
+                <SingleAsset>ASSET_RESOURCE_IRON</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_RESOURCE_DUP</zType>
+                <SingleAsset>ASSET_RESOURCE_IRON_DUP</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_RESOURCE_IRON</zType>
+                <zAsset>Prefabs/Resource/Iron</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_RESOURCE_IRON_DUP</zType>
+                <zAsset>Prefabs/Resource/IronDup</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    [asset] = load_resource_assets(tmp_path)
+    assert asset.z_type == "RESOURCE_ORE"
+    assert asset.prefab_name == "Iron"
+
+
+def test_resource_missing_xml_returns_empty(tmp_path: Path) -> None:
+    assert load_resource_assets(tmp_path / "does_not_exist") == []
+
+
+def test_resource_broken_chain_skipped(tmp_path: Path) -> None:
+    """Resources with no AssetVariation, missing variation entry, or
+    missing asset entry are skipped silently."""
+    _write(
+        tmp_path / "resource.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>RESOURCE_NOAV</zType>
+            </Entry>
+            <Entry>
+                <zType>RESOURCE_DANGLING_AV</zType>
+                <AssetVariation>ASSET_VARIATION_MISSING</AssetVariation>
+            </Entry>
+            <Entry>
+                <zType>RESOURCE_DANGLING_ASSET</zType>
+                <AssetVariation>ASSET_VARIATION_RESOURCE_X</AssetVariation>
+            </Entry>
+            <Entry>
+                <zType>RESOURCE_OK</zType>
+                <AssetVariation>ASSET_VARIATION_RESOURCE_OK</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_RESOURCE_X</zType>
+                <SingleAsset>ASSET_MISSING</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_RESOURCE_OK</zType>
+                <SingleAsset>ASSET_RESOURCE_OK</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_RESOURCE_OK</zType>
+                <zAsset>Prefabs/Resource/Ok</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    [asset] = load_resource_assets(tmp_path)
+    assert asset.z_type == "RESOURCE_OK"
