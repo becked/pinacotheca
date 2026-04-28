@@ -2,6 +2,56 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-04-27
+
+### Breaking
+- 3D improvement PNG filenames now use canonical `zIconName` from `improvement.xml`
+  (e.g. `IMPROVEMENT_3D_LIBRARY.png`). Many filenames have changed from prior versions —
+  downstream consumers (per-ankh) keying on PNG paths must update their lookups.
+
+### Added
+- 3D improvement and composite mesh extraction (`extract_improvement_meshes`,
+  previously curated `extract_composite_meshes` folded into the same path)
+- XML-driven asset discovery via new `asset_index.py` — walks
+  `improvement.xml → assetVariation.xml → asset.xml` (plus DLC variants); new
+  improvements added by the game appear automatically with no code changes
+- Capital extraction via `load_capital_assets()` — discovers
+  `ASSET_VARIATION_CITY_*_CAPITAL` entries (5 capitals render: Maurya, Tamil,
+  Yuezhi, Aksum, Hittite; Egypt renders as obelisk-only)
+- `SUPPLEMENTAL_PREFABS` hook for assets outside the XML chain (the four
+  pyramid construction stages)
+- 3D mesh renders bumped from 1024 → 2048 with mipmaps and trilinear filtering
+- Splat-plane-Y plinth cutting for buildings that sit on baked stone foundations,
+  with extent + vertex-count safety guards; falls back to the prior density heuristic
+- 180° Y pre-rotation in `bake_to_obj` to align Unity-authored `-Z`-facing
+  buildings with the OpenGL `+Z` camera
+- `--no-meshes` flag on the `pinacotheca` CLI to skip 3D extraction
+- Stale-PNG cleanup at the start of 3D extraction
+- `PREFAB_DECODE_BLACKLIST` to hard-skip prefabs whose Texture2D decode SIGSEGVs
+  UnityPy (currently Fort)
+
+### Changed
+- 114 3D improvement renders now ship (vs. 67 in 1.1.0), all under canonical names
+- `drop_splat_meshes` now filters by material name (`Splat*` / `LakeWater*`
+  prefixes + exact `WaterNoFoam` / `BathWater`) instead of mesh-name only —
+  catches custom-named splat meshes that previously leaked through (Watermill
+  Quad, Market `MarketSplat`, Hamlet `HamletFloor`, bath water surfaces)
+- Test suite expanded from 95 → 165 tests; new `test_asset_index.py` and
+  greatly expanded `test_prefab.py`
+
+### Removed
+- Hand-curated `IMPROVEMENT_MESHES` and `COMPOSITE_PREFABS` lists
+- Raw-mesh fallback path in extractor (`_resolve_mesh_variant`, `_find_texture`)
+- Defunct probe scripts `scripts/inspect_splat_y.py` and `scripts/inspect_barracks.py`
+
+### Documentation
+- New `docs/extracting-3d-buildings.md`, `docs/runtime-composed-cities.md`
+  (PVT investigation for the 7 unrendered capitals + urban tiles),
+  `docs/improvement-naming-alignment.md`, `docs/feature-request-per-ankh-map-atlas.md`,
+  `docs/per-ankh-missing-improvements.md`, `docs/code-review-3d-improvements.md`
+- `CLAUDE.md` and `README.md` rewritten around XML-driven discovery and the
+  downstream consumer contract
+
 ## [1.1.0] - 2026-04-05
 
 - Clean up versioning, deployment, and CLI commands
