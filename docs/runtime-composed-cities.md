@@ -43,8 +43,22 @@ The asset team's choice pattern across all city-related geometry:
 | Capitals: 4 DLC + Aksum + Hittite | Baked 3D mesh | Yes |
 | Capitals: 6 base game | PVT runtime composition | No |
 | Urban tiles: every nation | PVT runtime composition | No |
+| Improvements: Farm, Mine, Pasture | PVT runtime composition (no clutter) | No |
+| Improvements: Grove, Camp, Windmill | PVT + clutter splats | No (clutter unsupported) |
 
 So implementing the PVT renderer (Phases 1-5 below) unlocks **both** missing capitals **and** all urban tile variants in one shot — roughly doubles the value of the future investment. Urban-tile texture references are included in the texture inventory table below; they reuse most of the same nation textures (with `*Urban*` variants).
+
+## Improvements that share the splat pipeline
+
+A handful of *improvement* prefabs use the same shader family as the sparse capitals — `Prefabs/Improvements/{Farm_Generic, Mine, Pasture, Grove, Camp, Windmill}` walk to nothing but `SplatTextureDefaultPVT` / `SplatHeightDefault` / `SplatClutterDefault` planes, with no static building geometry to extract. Discovered while debugging a per-ankh gap report (see commit log around 2026-04-27).
+
+If/when the PVT renderer ships, **Farm, Mine, and Pasture come along for free** — they only use PVT + Height splats, which Phases 1–5 already cover. Two caveats:
+
+1. **Different data path.** Capitals attach a per-nation `TerrainTexturePVTSplat` MonoBehaviour with custom albedo/normal/etc references. Improvements use the *shared default* `SplatTextureDefaultPVT` material applied directly to a Plane — there's no MonoBehaviour with per-improvement texture pointers. Phase 1's MonoBehaviour walker will return nothing on these prefabs and needs a second code path that pulls textures from the material's `m_TexEnvs` directly (`_Albedomap`, `_Alphamap`, `_Heightmap`).
+
+2. **Clutter is the visual identity for three of them.** Grove, Camp, and Windmill are *clutter-dominant* — Windmill literally has no static mesh, just one height splat and one clutter splat where the runtime instantiates a windmill prop. Rendering these requires a clutter-splat phase (`Mohawk/Terrain/TerrainClutterSplat`) that the current plan doesn't cover. Tracked separately — see GitHub issue.
+
+Render priority is debatable for the PVT-only set: a Farm rendered as a textured terrain patch (rows of crops painted onto dirt) is only marginally interesting next to the Library/Temple class of building renders. Worth shipping as a side effect of the capitals work, not as primary motivation.
 
 ## How the game composes them
 

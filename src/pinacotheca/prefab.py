@@ -25,14 +25,22 @@ Coordinate conventions:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import numpy as np
+import texture2ddecoder
 from numpy.typing import NDArray
+from PIL import Image
 
-if TYPE_CHECKING:
-    from PIL import Image
+logger = logging.getLogger(__name__)
+
+# Unity TextureFormat enum value for BC6H (HDR block-compressed). UnityPy's
+# default decode path routes BC6H through PIL.Image.frombytes, which raises
+# "bad image mode" since PIL has no BC6H mode. We fall back to
+# texture2ddecoder.decode_bc6 — see _decode_texture.
+_TEXTURE_FORMAT_BC6H = 24
 
 
 @dataclass
@@ -170,7 +178,14 @@ def trs_matrix(pos: Any, rot: Any, scale: Any) -> NDArray[np.float64]:
 def walk_prefab(root_go: Any) -> list[PrefabPart]:
     """
     Walk the Transform tree from a root GameObject and collect every
-    active MeshFilter leaf with its baked world matrix and materials.
+    active mesh leaf with its baked world matrix and materials.
+
+    Two leaf shapes are recognized: a MeshFilter (mesh on the GO, with
+    materials on a sibling MeshRenderer/SkinnedMeshRenderer) or a
+    SkinnedMeshRenderer with no MeshFilter sibling (mesh embedded in the
+    SMR's own m_Mesh — the standard rigged-mesh pattern). Without the
+    second path, rigged improvements like Harbor and Nets walk to zero
+    or material-less parts.
 
     Skips inactive GameObjects (m_IsActive == False). Cycles or missing
     Transforms abort that branch.
@@ -203,27 +218,43 @@ def walk_prefab(root_go: Any) -> list[PrefabPart]:
         if getattr(go, "m_IsActive", True) is False:
             return
 
-        # Capture MeshFilter + sibling MeshRenderer materials (if any)
+        # Resolve the mesh + material source for this GO. Preference order:
+        # MeshFilter (with sibling MR/SMR for materials), then a bare
+        # SkinnedMeshRenderer whose m_Mesh holds the rigged geometry.
+        mesh_pptr: Any = None
+        mat_source: Any = None
+
         mf = _component_by_type(go, "MeshFilter")
         if mf is not None:
-            mesh_pptr = getattr(mf, "m_Mesh", None)
-            if mesh_pptr is not None and bool(mesh_pptr):
-                renderer = _component_by_type(go, "MeshRenderer") or _component_by_type(
+            mf_mesh = getattr(mf, "m_Mesh", None)
+            if mf_mesh is not None and bool(mf_mesh):
+                mesh_pptr = mf_mesh
+                mat_source = _component_by_type(go, "MeshRenderer") or _component_by_type(
                     go, "SkinnedMeshRenderer"
                 )
-                materials: list[Any] = []
-                if renderer is not None:
-                    raw_mats = getattr(renderer, "m_Materials", None) or []
-                    for mp in raw_mats:
-                        if bool(mp):
-                            materials.append(mp)
-                parts.append(
-                    PrefabPart(
-                        mesh_obj=mesh_pptr,
-                        world_matrix=world.copy(),
-                        materials=materials,
-                    )
+
+        if mesh_pptr is None:
+            smr = _component_by_type(go, "SkinnedMeshRenderer")
+            if smr is not None:
+                smr_mesh = getattr(smr, "m_Mesh", None)
+                if smr_mesh is not None and bool(smr_mesh):
+                    mesh_pptr = smr_mesh
+                    mat_source = smr
+
+        if mesh_pptr is not None:
+            materials: list[Any] = []
+            if mat_source is not None:
+                raw_mats = getattr(mat_source, "m_Materials", None) or []
+                for mp in raw_mats:
+                    if bool(mp):
+                        materials.append(mp)
+            parts.append(
+                PrefabPart(
+                    mesh_obj=mesh_pptr,
+                    world_matrix=world.copy(),
+                    materials=materials,
                 )
+            )
 
         # Recurse into children
         children = getattr(transform, "m_Children", None) or []
@@ -362,6 +393,57 @@ def bake_to_obj(parts: list[PrefabPart], *, pre_rotation_y_deg: float = 0.0) -> 
 _DIFFUSE_PROPERTY_KEYS = ("_BaseColorMap", "_BaseMap", "_MainTex", "_BaseColor")
 
 
+def _decode_texture(tex: Any) -> Image.Image | None:
+    """
+    Decode a UnityPy Texture2D to a PIL Image, with a BC6H fallback.
+
+    UnityPy's stock decode path (`tex.image`) hands the raw pixels to
+    `PIL.Image.frombytes(mode, ...)`, which raises `ValueError: bad image
+    mode` for BC6H — Unity's HDR block-compressed format (TextureFormat
+    24) — because PIL has no BC6H mode. At least one Old World diffuse
+    (Yazilikaya_Diffuse) ships as BC6H. We catch the failure and re-decode
+    via texture2ddecoder, which already powers UnityPy's other BC* paths.
+
+    Returns None when the texture is missing, decode fails for an
+    unsupported reason, or the BC6H fallback itself fails.
+    """
+    try:
+        img = getattr(tex, "image", None)
+        if img is not None:
+            return img  # type: ignore[no-any-return]
+    except Exception as exc:
+        # Fall through to format-specific recovery; non-BC6H errors
+        # propagate as None below.
+        pil_err = exc
+    else:
+        pil_err = None
+
+    fmt = getattr(tex, "m_TextureFormat", None)
+    fmt_value = int(fmt) if fmt is not None else None
+    if fmt_value != _TEXTURE_FORMAT_BC6H:
+        if pil_err is not None:
+            logger.debug("Texture decode failed (format=%s): %s", fmt_value, pil_err)
+        return None
+
+    try:
+        raw = tex.get_image_data()
+        width = int(tex.m_Width)
+        height = int(tex.m_Height)
+        decoded = texture2ddecoder.decode_bc6(raw, width, height)
+    except Exception as exc:
+        logger.debug("BC6H fallback decode failed: %s", exc)
+        return None
+
+    # texture2ddecoder.decode_bc6 returns 8-bit BGRA (alpha is always 255
+    # since BC6H has no alpha channel). HDR values are tone-mapped to
+    # [0,255] internally; over-bright pixels in unused atlas regions
+    # saturate to white but the mesh's UVs don't sample them.
+    img = Image.frombuffer("RGBA", (width, height), decoded, "raw", "BGRA", 0, 1)
+    # Unity texture origin is bottom-left; UnityPy's standard path applies
+    # this flip — match it so UVs line up with the rest of our pipeline.
+    return img.transpose(Image.FLIP_TOP_BOTTOM)
+
+
 def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
     """
     Pick the largest-area diffuse texture across all the prefab's
@@ -407,15 +489,15 @@ def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
                 seen_pathids.add(pathid)
                 try:
                     tex = tex_pptr.deref_parse_as_object()
-                    img = getattr(tex, "image", None)
-                    if img is None:
-                        continue
-                    area = int(img.width) * int(img.height)
-                    if area > best_area:
-                        best_area = area
-                        best_image = img
                 except Exception:
                     continue
+                img = _decode_texture(tex)
+                if img is None:
+                    continue
+                area = int(img.width) * int(img.height)
+                if area > best_area:
+                    best_area = area
+                    best_image = img
 
     return best_image  # type: ignore[no-any-return]
 
