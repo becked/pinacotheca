@@ -26,7 +26,9 @@ Coordinate conventions:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -35,6 +37,11 @@ from numpy.typing import NDArray
 from PIL import Image
 
 logger = logging.getLogger(__name__)
+
+# Identity quaternion in Unity (x,y,z,w) form. Used by walk_prefab when
+# `drop_animated_smr_rotation` substitutes an SMR transform's saved
+# rotation with identity (the runtime Animator overrides it anyway).
+_IDENTITY_QUAT = SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0)
 
 # Unity TextureFormat enum value for BC6H (HDR block-compressed). UnityPy's
 # default decode path routes BC6H through PIL.Image.frombytes, which raises
@@ -175,7 +182,62 @@ def trs_matrix(pos: Any, rot: Any, scale: Any) -> NDArray[np.float64]:
     return m
 
 
-def walk_prefab(root_go: Any) -> list[PrefabPart]:
+def _go_name_family(go_name: str) -> str:
+    """Derive a "rig family" name from a GameObject name for the
+    `rig_rotation_overrides` lookup in `walk_prefab`. Strips trailing
+    " (N)" and "_single" suffixes, then takes everything before
+    "_Rig". Returns empty string when the name has no "_Rig"
+    component — used to ensure overrides only target rig GameObjects,
+    not prefab roots or mesh GOs that happen to share a stem with a
+    rig family.
+
+    Examples:
+        Horse_Rig_single  → Horse
+        Horse_Rig_2       → Horse
+        Bird_Seagull_Rig  → Bird_Seagull
+        Goat_Rig (1)      → Goat
+        Pig               → ""    (prefab root — no override)
+        Pig_GEO           → ""    (mesh GO — no override)
+        Crab              → ""    (prefab root)
+    """
+    if "_Rig" not in go_name:
+        return ""
+    name = re.sub(r"\s*\(\d+\)\s*$", "", go_name)
+    name = re.sub(r"_single$", "", name)
+    return name.split("_Rig")[0]
+
+
+def _has_animator_with_avatar(go: Any) -> bool:
+    """
+    True if `go` has an Animator component with a non-null m_Avatar PPtr.
+
+    Used as the "under avatar rig" gate for the resource-job rotation
+    fix — when an SkinnedMeshRenderer descends from such a GameObject,
+    its transform localRotation is overridden at runtime by the
+    Animator's idle clip, so the saved value is not what the game
+    displays.
+    """
+    animator = _component_by_type(go, "Animator")
+    if animator is None:
+        return False
+    avatar = getattr(animator, "m_Avatar", None)
+    if avatar is None:
+        return False
+    try:
+        return bool(avatar)
+    except Exception:
+        return False
+
+
+def walk_prefab(
+    root_go: Any,
+    *,
+    drop_animated_smr_rotation: bool = False,
+    exclude_tag_ids: frozenset[int] | None = None,
+    include_only_tag_ids: frozenset[int] | None = None,
+    parent_world: NDArray[np.float64] | None = None,
+    rig_rotation_overrides: dict[str, Any] | None = None,
+) -> list[PrefabPart]:
     """
     Walk the Transform tree from a root GameObject and collect every
     active mesh leaf with its baked world matrix and materials.
@@ -189,6 +251,53 @@ def walk_prefab(root_go: Any) -> list[PrefabPart]:
 
     Skips inactive GameObjects (m_IsActive == False). Cycles or missing
     Transforms abort that branch.
+
+    drop_animated_smr_rotation: opt-in for the resource-job render path.
+        Animal resource prefabs (Horse, Cattle, Sheep, …) carry a saved
+        SMR localRotation that lays the mesh on its back; in-game the
+        Animator's idle clip overrides this rotation each frame. With
+        this flag on, when an SMR's GameObject sits under an Animator
+        with a non-null Avatar, that transform's localRotation is
+        treated as identity (position and scale preserved) so the
+        upright authoring of the mesh shows through. Default False
+        preserves historical behavior for buildings/capitals/urbans.
+
+    exclude_tag_ids: opt-in subtree filter by Unity tag. When a
+        GameObject's `m_Tag` int is in this set, the GO and its entire
+        subtree are skipped. Resource prefabs ship two co-located
+        display sets (herd + solo central rig); the solo group is
+        marked with the "SoloResource" tag and toggled at runtime by
+        `ResourceRenderer.EnableSingleObjectMode`. Passing the resolved
+        SoloResource tag id here yields the herd-only render. Default
+        None preserves historical behavior.
+
+    include_only_tag_ids: opt-in subtree filter — the inverse of
+        `exclude_tag_ids`. When non-None, mesh leaves are emitted only
+        if they (or any ancestor up the chain) carry an `m_Tag` in
+        this set; untagged subtrees outside the tagged ancestry are
+        silently dropped. Used for the resource-job "solo rig" render:
+        passing the resolved SoloResource tag id yields ONLY the
+        central solo subtree (matches the game's `EnableSingleObjectMode`
+        herd-off behavior). Default None preserves historical behavior.
+        Composes with `exclude_tag_ids`: a leaf must descend from an
+        included ancestor AND not lie under an excluded ancestor.
+
+    parent_world: optional initial world matrix passed to the recursion
+        in lieu of the default identity. Lets callers walk a non-root
+        subtree (e.g. a single SoloResource immediate child of the
+        prefab root) while preserving the prefab root's local TRS.
+        Default None preserves historical behavior.
+
+    rig_rotation_overrides: opt-in name-keyed corrective rotations for
+        animal rigs whose saved rotation produces an awkward icon
+        view. Keys are rig "family" names (everything before `_Rig`
+        in the GameObject name — see `_go_name_family`); values are
+        replacement quaternions (any object with x/y/z/w attrs).
+        When the current GO's family matches a key, the mapped
+        quaternion replaces the local rotation entirely (taking
+        precedence over the saved value AND the B-lite identity
+        drop). Position and scale are preserved. Default None — no
+        substitutions.
     """
     parts: list[PrefabPart] = []
 
@@ -196,16 +305,14 @@ def walk_prefab(root_go: Any) -> list[PrefabPart]:
     if root_t is None:
         return parts
 
-    def recurse(transform: Any, parent_world: NDArray[np.float64]) -> None:
-        # Compute this node's world matrix
-        local = trs_matrix(
-            getattr(transform, "m_LocalPosition", None),
-            getattr(transform, "m_LocalRotation", None),
-            getattr(transform, "m_LocalScale", None),
-        )
-        world = parent_world @ local
-
-        # Find this transform's owning GameObject
+    def recurse(
+        transform: Any,
+        parent_world: NDArray[np.float64],
+        under_avatar_rig: bool,
+        under_required_tag: bool,
+    ) -> None:
+        # Find this transform's owning GameObject (needed up-front so we
+        # can detect SMR + Animator+Avatar before composing the matrix).
         go_pptr = getattr(transform, "m_GameObject", None)
         if go_pptr is None or not bool(go_pptr):
             return
@@ -217,6 +324,57 @@ def walk_prefab(root_go: Any) -> list[PrefabPart]:
         # Skip inactive GameObjects
         if getattr(go, "m_IsActive", True) is False:
             return
+
+        # Tag-based subtree skip (e.g. SoloResource for resource prefabs).
+        if exclude_tag_ids:
+            tag_id = getattr(go, "m_Tag", 0)
+            if isinstance(tag_id, int) and tag_id in exclude_tag_ids:
+                return
+
+        # Activate the "ancestry contains an include-tagged GO" flag if
+        # this GO carries one of the required tags. Sticky downward.
+        is_under_required_tag = under_required_tag
+        if include_only_tag_ids and not is_under_required_tag:
+            tag_id = getattr(go, "m_Tag", 0)
+            if isinstance(tag_id, int) and tag_id in include_only_tag_ids:
+                is_under_required_tag = True
+
+        # Inherit (or activate) the "ancestor has Animator+Avatar" flag.
+        is_under_avatar_rig = under_avatar_rig or (
+            drop_animated_smr_rotation and _has_animator_with_avatar(go)
+        )
+
+        # When this GO carries an SMR under an Animator+Avatar ancestor,
+        # the Animator overrides this transform's localRotation at
+        # runtime — substitute identity so the as-authored mesh
+        # orientation comes through.
+        drop_rotation = (
+            drop_animated_smr_rotation
+            and is_under_avatar_rig
+            and _component_by_type(go, "SkinnedMeshRenderer") is not None
+        )
+
+        local_rot: Any
+        if drop_rotation:
+            local_rot = _IDENTITY_QUAT
+        else:
+            local_rot = getattr(transform, "m_LocalRotation", None)
+
+        # Per-rig orientation override: if this GO's family name (e.g.
+        # "Horse" from "Horse_Rig_single") is mapped, replace local_rot
+        # entirely. Used for resource icons where the saved rig
+        # rotation collapses the mesh to a non-iconic angle.
+        if rig_rotation_overrides:
+            family = _go_name_family(getattr(go, "m_Name", ""))
+            override = rig_rotation_overrides.get(family)
+            if override is not None:
+                local_rot = override
+        local = trs_matrix(
+            getattr(transform, "m_LocalPosition", None),
+            local_rot,
+            getattr(transform, "m_LocalScale", None),
+        )
+        world = parent_world @ local
 
         # Resolve the mesh + material source for this GO. Preference order:
         # MeshFilter (with sibling MR/SMR for materials), then a bare
@@ -241,7 +399,7 @@ def walk_prefab(root_go: Any) -> list[PrefabPart]:
                     mesh_pptr = smr_mesh
                     mat_source = smr
 
-        if mesh_pptr is not None:
+        if mesh_pptr is not None and is_under_required_tag:
             materials: list[Any] = []
             if mat_source is not None:
                 raw_mats = getattr(mat_source, "m_Materials", None) or []
@@ -265,9 +423,11 @@ def walk_prefab(root_go: Any) -> list[PrefabPart]:
                 child_t = child_pptr.deref_parse_as_object()
             except Exception:
                 continue
-            recurse(child_t, world)
+            recurse(child_t, world, is_under_avatar_rig, is_under_required_tag)
 
-    recurse(root_t, np.eye(4, dtype=np.float64))
+    initial_under_required_tag = include_only_tag_ids is None
+    initial_world = parent_world if parent_world is not None else np.eye(4, dtype=np.float64)
+    recurse(root_t, initial_world, False, initial_under_required_tag)
     return parts
 
 

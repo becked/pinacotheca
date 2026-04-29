@@ -121,6 +121,26 @@ def perspective_matrix(fov: float, aspect: float, near: float, far: float) -> ND
     )
 
 
+def orthographic_matrix(
+    left: float,
+    right: float,
+    bottom: float,
+    top: float,
+    near: float,
+    far: float,
+) -> NDArray[np.float32]:
+    """Standard OpenGL orthographic projection matrix."""
+    return np.array(
+        [
+            [2 / (right - left), 0, 0, -(right + left) / (right - left)],
+            [0, 2 / (top - bottom), 0, -(top + bottom) / (top - bottom)],
+            [0, 0, -2 / (far - near), -(far + near) / (far - near)],
+            [0, 0, 0, 1],
+        ],
+        dtype="f4",
+    )
+
+
 def look_at_matrix(
     eye: NDArray[np.float64], target: NDArray[np.float64], up: NDArray[np.float64]
 ) -> NDArray[np.float32]:
@@ -173,6 +193,11 @@ void main() {
     vec3 light_dir = normalize(vec3(0.5, 0.5, 1.0));
     float diffuse = max(dot(normalize(v_normal), light_dir), 0.3);
     vec4 tex_color = texture(texture0, v_uv);
+    // Alpha-cutout: drop near-transparent fragments so they don't write
+    // depth. Without this, vegetation / billboard quads (Citrus, Incense,
+    // Yuezhi Capital trees) render as opaque rectangles. 0.5 matches
+    // Unity's standard cutout shader threshold.
+    if (tex_color.a < 0.5) discard;
     fragColor = vec4(tex_color.rgb * diffuse, tex_color.a);
 }
 """
@@ -238,11 +263,16 @@ def render_mesh_to_image(
         height: Render height in pixels (before cropping)
         autocrop: If True, crop to non-transparent content with padding
         padding: Padding pixels around content when autocropping
-        force_upright: If True, always treat Y as up and use a slightly elevated
-            front camera (3/4 perspective). Use this for buildings/improvements,
-            which are authored Y-up regardless of footprint shape. When False,
-            a heuristic rotates the camera for meshes that appear lying down
-            (some unit poses).
+        force_upright: If True, always treat Y as up and render with an
+            orthographic camera at 30° downward tilt. Use this for
+            buildings/improvements and resource prefabs, which are authored
+            Y-up regardless of footprint shape. Ortho mirrors the game's
+            effective behavior on any single hex (its perspective camera is
+            far enough that depth foreshortening on a 4-unit tile is
+            negligible) and prevents multi-rig resource prefabs from
+            depth-crunching back-row and front-row animals onto the same
+            screen position. When False, a heuristic rotates the perspective
+            camera for meshes that appear lying down (some unit poses).
 
     Returns:
         PIL Image with rendered mesh on transparent background
@@ -299,32 +329,38 @@ def render_mesh_to_image(
             extent[1] < extent[0] * 0.5 or extent[1] < extent[2] * 0.5
         )
 
-        # Default render uses 60° FOV (wide). Buildings match the in-game
-        # main camera: 45° downward pitch and 45° FOV (matches GameCamera.cs
-        # minZoomRotation = (45,0,0) and minZoomFOV/maxZoomFOV = 45).
-        fov_deg = 45.0 if force_upright else 60.0
+        aspect = width / height
 
         if is_horizontal:
             # Model is lying down - view from +X axis with Z as up
             eye = center + np.array([max_extent * 1.5, 0.1, 0])
             up_vector = np.array([0, 0, 1])
+            proj = perspective_matrix(np.radians(60.0), aspect, 0.01, 1000)
         elif force_upright:
-            # Building view: 30° downward, more flattering than the game's
-            # 45° main-camera angle when buildings are framed close-up
-            # (the in-game 45° works because the camera is far away).
+            # Building/resource view: 30° downward, orthographic. The game's
+            # camera is ~25–40 world units from any single hex (a hex is ~4
+            # units across), so perspective on a single tile approximates
+            # ortho. Using true ortho here matches what the game shows on a
+            # single tile and avoids depth-crunch on multi-rig resource
+            # prefabs (e.g. herd of goats) where close perspective collapses
+            # back-row and front-row animals onto similar screen-Y.
             distance = max_extent * 1.6
             tilt_deg = 30.0
             sin_t = float(np.sin(np.radians(tilt_deg)))
             cos_t = float(np.cos(np.radians(tilt_deg)))
             eye = center + np.array([0.0, distance * sin_t, distance * cos_t])
             up_vector = np.array([0, 1, 0])
+            # Frustum sized so visible width matches the legacy perspective
+            # view at the mesh-center plane: 1.6 * tan(22.5°) ≈ 0.66.
+            half_w = max_extent * 0.66
+            half_h = half_w / aspect
+            proj = orthographic_matrix(-half_w, half_w, -half_h, half_h, 0.01, 1000)
         else:
             # Normal upright model - view from front
             eye = center + np.array([0, 0.1, max_extent * 1.5])
             up_vector = np.array([0, 1, 0])
+            proj = perspective_matrix(np.radians(60.0), aspect, 0.01, 1000)
 
-        # Build MVP matrix
-        proj = perspective_matrix(np.radians(fov_deg), width / height, 0.01, 1000)
         view = look_at_matrix(eye, center, up_vector)
         mvp = (proj @ view).T  # Transpose for column-major OpenGL
 

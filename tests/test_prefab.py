@@ -9,6 +9,7 @@ X-negation that converts Unity left-handed coords to OBJ right-handed.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -22,6 +23,7 @@ from pinacotheca.prefab import (
     quat_to_mat3,
     strip_plinth_from_obj,
     trs_matrix,
+    walk_prefab,
 )
 
 
@@ -724,3 +726,371 @@ def test_bake_to_obj_pre_rotation_default_unchanged(monkeypatch: Any) -> None:
     v_line = next(ln for ln in a.splitlines() if ln.startswith("v "))
     coords = [float(x) for x in v_line.split()[1:]]
     np.testing.assert_allclose(coords, [0.0, 0.0, 1.0], atol=1e-6)
+
+
+# --- walk_prefab — drop_animated_smr_rotation -------------------------------
+
+
+class _PPtr:
+    """Mimics a UnityPy PPtr: bool, deref(), deref_parse_as_object()."""
+
+    def __init__(self, target: Any, type_name: str) -> None:
+        self._target = target
+        self._type_name = type_name
+
+    def __bool__(self) -> bool:
+        return self._target is not None
+
+    def deref(self) -> Any:
+        return SimpleNamespace(type=SimpleNamespace(name=self._type_name))
+
+    def deref_parse_as_object(self) -> Any:
+        return self._target
+
+
+class _TruthyMeshPPtr:
+    """Truthy mesh PPtr — walk_prefab stores it in PrefabPart.mesh_obj
+    without dereferencing, so a bare bool is enough."""
+
+    def __bool__(self) -> bool:
+        return True
+
+
+def _make_go(*components: tuple[str, Any], tag_id: int = 0) -> SimpleNamespace:
+    """Build a fake GameObject whose `m_Component` is a list of typed PPtrs.
+    The Transform component is appended later via `_attach_transform`.
+    `tag_id` populates `m_Tag` for tag-filtering tests (default 0 = untagged)."""
+    go = SimpleNamespace(m_IsActive=True, m_Component=[], m_Tag=tag_id)
+    for type_name, obj in components:
+        go.m_Component.append(SimpleNamespace(component=_PPtr(obj, type_name)))
+    return go
+
+
+def _make_transform(
+    *,
+    pos: V3 = V3(0, 0, 0),
+    rot: Q = Q(0, 0, 0, 1),
+    scale: V3 = V3(1, 1, 1),
+    go: SimpleNamespace,
+    children: list[Any] | None = None,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        m_LocalPosition=pos,
+        m_LocalRotation=rot,
+        m_LocalScale=scale,
+        m_Children=[_PPtr(c, "Transform") for c in (children or [])],
+        m_GameObject=_PPtr(go, "GameObject"),
+    )
+
+
+def _attach_transform(go: SimpleNamespace, t: SimpleNamespace) -> None:
+    go.m_Component.append(SimpleNamespace(component=_PPtr(t, "Transform")))
+
+
+# 180° rotation around the X axis as a Unity quaternion (x, y, z, w).
+# Stands in for the animal SMR's saved rotation; matrix [[1,0,0],[0,-1,0],
+# [0,0,-1]] flips +Y to -Y so the test can check whether it was applied.
+_X180 = Q(1.0, 0.0, 0.0, 0.0)
+
+
+def _build_animal_like_prefab(
+    *,
+    smr_rot: Q,
+    with_avatar: bool,
+    smr_pos: V3 = V3(0, 0, 0),
+    smr_scale: V3 = V3(1, 1, 1),
+) -> SimpleNamespace:
+    """Build Root → Rig (Animator+optional Avatar) → SMR child."""
+    smr = SimpleNamespace(m_Mesh=_TruthyMeshPPtr(), m_Materials=[])
+    smr_go = _make_go(("SkinnedMeshRenderer", smr))
+    smr_t = _make_transform(pos=smr_pos, rot=smr_rot, scale=smr_scale, go=smr_go)
+    _attach_transform(smr_go, smr_t)
+
+    if with_avatar:
+        animator = SimpleNamespace(m_Avatar=_PPtr(SimpleNamespace(), "Avatar"))
+        rig_go = _make_go(("Animator", animator))
+    else:
+        rig_go = _make_go()
+    rig_t = _make_transform(go=rig_go, children=[smr_t])
+    _attach_transform(rig_go, rig_t)
+
+    root_go = _make_go()
+    root_t = _make_transform(go=root_go, children=[rig_t])
+    _attach_transform(root_go, root_t)
+    return root_go
+
+
+def test_walk_prefab_keeps_smr_rotation_when_flag_off() -> None:
+    """Default (drop_animated_smr_rotation=False) preserves the saved SMR
+    rotation even when an Animator+Avatar ancestor is present."""
+    root_go = _build_animal_like_prefab(smr_rot=_X180, with_avatar=True)
+    parts = walk_prefab(root_go)
+    assert len(parts) == 1
+    rotated = parts[0].world_matrix[:3, :3] @ np.array([0.0, 1.0, 0.0])
+    np.testing.assert_allclose(rotated, [0.0, -1.0, 0.0], atol=1e-6)
+
+
+def test_walk_prefab_drops_smr_rotation_under_avatar_rig() -> None:
+    """drop_animated_smr_rotation + Animator+Avatar in ancestry → the SMR
+    transform's localRotation is replaced with identity. Position and
+    scale are preserved."""
+    root_go = _build_animal_like_prefab(
+        smr_rot=_X180,
+        with_avatar=True,
+        smr_pos=V3(0.5, 1.0, -0.4),
+        smr_scale=V3(2.0, 2.0, 2.0),
+    )
+    parts = walk_prefab(root_go, drop_animated_smr_rotation=True)
+    assert len(parts) == 1
+    m = parts[0].world_matrix
+    np.testing.assert_allclose(m[:3, :3], np.diag([2.0, 2.0, 2.0]), atol=1e-6)
+    np.testing.assert_allclose(m[:3, 3], [0.5, 1.0, -0.4], atol=1e-6)
+
+
+def test_walk_prefab_keeps_smr_rotation_without_avatar_rig() -> None:
+    """drop_animated_smr_rotation=True but no Animator+Avatar ancestor —
+    e.g. a Crab-style static SMR — leaves the saved rotation alone.
+    Confirms the discriminator gates correctly."""
+    root_go = _build_animal_like_prefab(smr_rot=_X180, with_avatar=False)
+    parts = walk_prefab(root_go, drop_animated_smr_rotation=True)
+    assert len(parts) == 1
+    rotated = parts[0].world_matrix[:3, :3] @ np.array([0.0, 1.0, 0.0])
+    np.testing.assert_allclose(rotated, [0.0, -1.0, 0.0], atol=1e-6)
+
+
+def test_walk_prefab_keeps_meshfilter_rotation_under_avatar_rig() -> None:
+    """Only SMR-bearing GOs get the rotation override; a MeshFilter sibling
+    under the same Animator+Avatar ancestor keeps its saved rotation."""
+    mf = SimpleNamespace(m_Mesh=_TruthyMeshPPtr())
+    mr = SimpleNamespace(m_Materials=[])
+    mf_go = _make_go(("MeshFilter", mf), ("MeshRenderer", mr))
+    mf_t = _make_transform(rot=_X180, go=mf_go)
+    _attach_transform(mf_go, mf_t)
+
+    animator = SimpleNamespace(m_Avatar=_PPtr(SimpleNamespace(), "Avatar"))
+    rig_go = _make_go(("Animator", animator))
+    rig_t = _make_transform(go=rig_go, children=[mf_t])
+    _attach_transform(rig_go, rig_t)
+
+    root_go = _make_go()
+    root_t = _make_transform(go=root_go, children=[rig_t])
+    _attach_transform(root_go, root_t)
+
+    parts = walk_prefab(root_go, drop_animated_smr_rotation=True)
+    assert len(parts) == 1
+    rotated = parts[0].world_matrix[:3, :3] @ np.array([0.0, 1.0, 0.0])
+    np.testing.assert_allclose(rotated, [0.0, -1.0, 0.0], atol=1e-6)
+
+
+def _make_meshfilter_go(*, tag_id: int = 0) -> tuple[SimpleNamespace, SimpleNamespace]:
+    """Build a fake GO carrying MeshFilter+MeshRenderer with a truthy
+    mesh PPtr, plus its Transform. Returns (go, transform)."""
+    mf = SimpleNamespace(m_Mesh=_TruthyMeshPPtr())
+    mr = SimpleNamespace(m_Materials=[])
+    go = _make_go(("MeshFilter", mf), ("MeshRenderer", mr), tag_id=tag_id)
+    t = _make_transform(go=go)
+    _attach_transform(go, t)
+    return go, t
+
+
+def test_walk_prefab_excludes_tagged_subtree() -> None:
+    """Root with two mesh-bearing children: one tagged (e.g. SoloResource),
+    one untagged. With `exclude_tag_ids` containing the tag, only the
+    untagged child contributes a PrefabPart."""
+    _, tagged_t = _make_meshfilter_go(tag_id=20012)
+    _, untagged_t = _make_meshfilter_go(tag_id=0)
+
+    root_go = _make_go()
+    root_t = _make_transform(go=root_go, children=[tagged_t, untagged_t])
+    _attach_transform(root_go, root_t)
+
+    parts = walk_prefab(root_go, exclude_tag_ids=frozenset({20012}))
+    assert len(parts) == 1
+
+
+def test_walk_prefab_includes_tagged_when_not_excluded() -> None:
+    """Same tree as above, but with `exclude_tag_ids=None` — both children
+    contribute parts. Confirms the default path is unchanged."""
+    _, tagged_t = _make_meshfilter_go(tag_id=20012)
+    _, untagged_t = _make_meshfilter_go(tag_id=0)
+
+    root_go = _make_go()
+    root_t = _make_transform(go=root_go, children=[tagged_t, untagged_t])
+    _attach_transform(root_go, root_t)
+
+    parts = walk_prefab(root_go)
+    assert len(parts) == 2
+
+
+def test_walk_prefab_excludes_tagged_subtree_descendants() -> None:
+    """When a tagged GO has untagged mesh-bearing descendants, they are
+    skipped too — the early return short-circuits the entire subtree."""
+    _, child_t = _make_meshfilter_go(tag_id=0)
+    tagged_go = _make_go(tag_id=20012)
+    tagged_t = _make_transform(go=tagged_go, children=[child_t])
+    _attach_transform(tagged_go, tagged_t)
+
+    root_go = _make_go()
+    root_t = _make_transform(go=root_go, children=[tagged_t])
+    _attach_transform(root_go, root_t)
+
+    parts = walk_prefab(root_go, exclude_tag_ids=frozenset({20012}))
+    assert len(parts) == 0
+
+
+def test_walk_prefab_include_only_tagged_subtree() -> None:
+    """With `include_only_tag_ids` set, only the tagged subtree's mesh
+    leaves emerge. Untagged siblings of the tagged GO contribute no
+    PrefabParts. Mirror image of `test_walk_prefab_excludes_tagged_subtree`."""
+    _, tagged_t = _make_meshfilter_go(tag_id=20012)
+    _, untagged_t = _make_meshfilter_go(tag_id=0)
+
+    root_go = _make_go()
+    root_t = _make_transform(go=root_go, children=[tagged_t, untagged_t])
+    _attach_transform(root_go, root_t)
+
+    parts = walk_prefab(root_go, include_only_tag_ids=frozenset({20012}))
+    assert len(parts) == 1
+
+
+def test_walk_prefab_include_filter_descends_into_untagged_descendants() -> None:
+    """The include filter is ancestor-sticky: an untagged mesh-bearing
+    descendant of a tagged ancestor still emits a PrefabPart. Confirms
+    we don't require the tag on the leaf itself."""
+    _, child_t = _make_meshfilter_go(tag_id=0)
+    tagged_go = _make_go(tag_id=20012)
+    tagged_t = _make_transform(
+        pos=V3(0.5, 1.0, -0.4),
+        go=tagged_go,
+        children=[child_t],
+    )
+    _attach_transform(tagged_go, tagged_t)
+
+    root_go = _make_go()
+    root_t = _make_transform(go=root_go, children=[tagged_t])
+    _attach_transform(root_go, root_t)
+
+    parts = walk_prefab(root_go, include_only_tag_ids=frozenset({20012}))
+    assert len(parts) == 1
+    # The descendant inherits the tagged ancestor's translation.
+    np.testing.assert_allclose(parts[0].world_matrix[:3, 3], [0.5, 1.0, -0.4], atol=1e-6)
+
+
+def test_walk_prefab_include_filter_none_passes_through() -> None:
+    """include_only_tag_ids=None is a no-op: every active mesh leaf
+    emerges, irrespective of tags. Sanity-checks the default path."""
+    _, tagged_t = _make_meshfilter_go(tag_id=20012)
+    _, untagged_t = _make_meshfilter_go(tag_id=0)
+
+    root_go = _make_go()
+    root_t = _make_transform(go=root_go, children=[tagged_t, untagged_t])
+    _attach_transform(root_go, root_t)
+
+    parts = walk_prefab(root_go, include_only_tag_ids=None)
+    assert len(parts) == 2
+
+
+def test_walk_prefab_include_and_exclude_filters_coexist() -> None:
+    """include + exclude AND-compose: a leaf must descend from an
+    included ancestor AND not lie under an excluded ancestor."""
+    # Untagged leaf B that lives under the tagged A — should emerge.
+    _, b_t = _make_meshfilter_go(tag_id=0)
+    # Untagged leaf D nested under an excluded ancestor C — should NOT emerge.
+    _, d_t = _make_meshfilter_go(tag_id=0)
+    excluded_go = _make_go(tag_id=99999)
+    excluded_t = _make_transform(go=excluded_go, children=[d_t])
+    _attach_transform(excluded_go, excluded_t)
+    # Tagged ancestor A holds B and the excluded subtree C→D.
+    tagged_go = _make_go(tag_id=20012)
+    tagged_t = _make_transform(go=tagged_go, children=[b_t, excluded_t])
+    _attach_transform(tagged_go, tagged_t)
+    # Untagged leaf E at root level — should NOT emerge (no include ancestor).
+    _, e_t = _make_meshfilter_go(tag_id=0)
+
+    root_go = _make_go()
+    root_t = _make_transform(go=root_go, children=[tagged_t, e_t])
+    _attach_transform(root_go, root_t)
+
+    parts = walk_prefab(
+        root_go,
+        include_only_tag_ids=frozenset({20012}),
+        exclude_tag_ids=frozenset({99999}),
+    )
+    assert len(parts) == 1
+
+
+# --- Per-rig rotation overrides + parent_world ---------------------------
+
+
+def _build_named_rig_prefab(rig_name: str, *, with_avatar: bool = True) -> SimpleNamespace:
+    """Root → Rig (Animator+optional Avatar, given m_Name) → SMR child.
+    Used for testing the family-name override mechanism."""
+    smr = SimpleNamespace(m_Mesh=_TruthyMeshPPtr(), m_Materials=[])
+    smr_go = _make_go(("SkinnedMeshRenderer", smr))
+    smr_t = _make_transform(go=smr_go)
+    _attach_transform(smr_go, smr_t)
+
+    if with_avatar:
+        animator = SimpleNamespace(m_Avatar=_PPtr(SimpleNamespace(), "Avatar"))
+        rig_go = _make_go(("Animator", animator))
+    else:
+        rig_go = _make_go()
+    rig_go.m_Name = rig_name
+    rig_t = _make_transform(rot=_X180, go=rig_go, children=[smr_t])
+    _attach_transform(rig_go, rig_t)
+
+    root_go = _make_go()
+    root_t = _make_transform(go=root_go, children=[rig_t])
+    _attach_transform(root_go, root_t)
+    return root_go
+
+
+def test_walk_prefab_applies_rig_rotation_override_by_family() -> None:
+    """A rig whose family-name (everything before `_Rig`) is in the
+    overrides dict has its saved local rotation replaced. The override
+    quaternion `(0, 0, -0.7071, 0.7071)` is Rz(-90°), which maps a
+    mesh-space +X point to world +Y."""
+    root_go = _build_named_rig_prefab("Crab_Rig_single")
+    rz_neg_90 = SimpleNamespace(x=0.0, y=0.0, z=-0.7071067811865475, w=0.7071067811865476)
+
+    parts = walk_prefab(
+        root_go,
+        rig_rotation_overrides={"Crab": rz_neg_90},
+    )
+    assert len(parts) == 1
+    # Rz(-90°) applied to mesh +X = (1,0,0) gives world (0,-1,0).
+    rotated = parts[0].world_matrix[:3, :3] @ np.array([1.0, 0.0, 0.0])
+    np.testing.assert_allclose(rotated, [0.0, -1.0, 0.0], atol=1e-6)
+
+
+def test_walk_prefab_no_override_when_family_unmapped() -> None:
+    """A rig whose family is not in the overrides dict keeps its saved
+    local rotation. The fixture uses _X180 (180° around X) on the rig,
+    so mesh +Y should map to world -Y."""
+    root_go = _build_named_rig_prefab("Goat_Rig_single")
+
+    parts = walk_prefab(
+        root_go,
+        rig_rotation_overrides={"Crab": _X180},  # Goat is not in this map
+    )
+    assert len(parts) == 1
+    rotated = parts[0].world_matrix[:3, :3] @ np.array([0.0, 1.0, 0.0])
+    np.testing.assert_allclose(rotated, [0.0, -1.0, 0.0], atol=1e-6)
+
+
+def test_walk_prefab_parent_world_seeds_initial_matrix() -> None:
+    """`parent_world` is multiplied into the recursion's accumulated
+    world before any in-tree TRS. A non-identity parent_world should
+    therefore appear pre-multiplied in every emitted part's world
+    matrix."""
+    _, mf_t = _make_meshfilter_go(tag_id=0)
+    root_go = _make_go()
+    root_t = _make_transform(go=root_go, children=[mf_t])
+    _attach_transform(root_go, root_t)
+
+    seed = np.eye(4, dtype=np.float64)
+    seed[:3, 3] = [10.0, 20.0, 30.0]
+
+    parts = walk_prefab(root_go, parent_world=seed)
+    assert len(parts) == 1
+    np.testing.assert_allclose(parts[0].world_matrix[:3, 3], [10.0, 20.0, 30.0], atol=1e-6)

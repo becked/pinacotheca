@@ -10,6 +10,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from pinacotheca.categories import CATEGORIES, categorize
@@ -588,6 +589,164 @@ PREFAB_DECODE_BLACKLIST: frozenset[str] = frozenset(
 )
 
 
+def _classify_immediate_children(
+    root_go: Any,
+    solo_resource_tag_ids: frozenset[int],
+) -> tuple[Any, list[tuple[str, Any]], list[tuple[str, Any]]] | None:
+    """
+    Inspect a resource prefab's root and classify its immediate children
+    by SoloResource tag, deriving a "rig family" name for each.
+
+    Returns `(root_local_matrix, solo_children, herd_children)` where
+    each `*_children` list holds `(family, child_go)` tuples — or None
+    if the root has no Transform.
+
+    Used to decide whether a resource prefab needs the split path
+    (multi-creature like Crab / Fish, len(solo_children) >= 2) vs the
+    single-rig path (Goat etc., len(solo_children) <= 1).
+    """
+    # Local imports — these mirror the prefab-side ones and avoid a
+    # circular import at module load time.
+    from pinacotheca.prefab import _component_by_type, trs_matrix
+
+    root_t = _component_by_type(root_go, "Transform")
+    if root_t is None:
+        return None
+
+    root_local = trs_matrix(
+        getattr(root_t, "m_LocalPosition", None),
+        getattr(root_t, "m_LocalRotation", None),
+        getattr(root_t, "m_LocalScale", None),
+    )
+
+    solo_children: list[tuple[str, Any]] = []
+    herd_children: list[tuple[str, Any]] = []
+    for child_pptr in getattr(root_t, "m_Children", None) or []:
+        if not bool(child_pptr):
+            continue
+        try:
+            child_t = child_pptr.deref_parse_as_object()
+        except Exception:
+            continue
+        try:
+            child_go = child_t.m_GameObject.deref_parse_as_object()
+        except Exception:
+            continue
+        name = getattr(child_go, "m_Name", "")
+        if not name:
+            continue
+        family = _derive_rig_family(name)
+        tag = getattr(child_go, "m_Tag", 0)
+        entry = (family, child_go)
+        if isinstance(tag, int) and solo_resource_tag_ids and tag in solo_resource_tag_ids:
+            solo_children.append(entry)
+        else:
+            herd_children.append(entry)
+    return (root_local, solo_children, herd_children)
+
+
+# --- Per-rig orientation overrides ---------------------------------------
+#
+# Resource animal prefabs are authored to look right at the in-game camera
+# distance and angle. For our close-up icon-style renders, several rigs
+# end up at unhelpful angles (Horse facing into depth, Fish vertical,
+# Crab on its side, etc.). The overrides below replace each listed rig's
+# saved `m_LocalRotation` with a corrective quaternion that lands the
+# mesh in a more iconic orientation. Keys are rig "family" names —
+# everything before `_Rig` in the GameObject name. Apply via the
+# `rig_rotation_overrides` parameter of `walk_prefab`.
+#
+# Tune these empirically: re-render after editing and check the result.
+
+# Rx(-90°): mesh +Z → world +Y. For X-longest "flat" meshes (Crab) where
+# we want a top-down view with mesh's height axis aligned with world up.
+_RX_NEG_90 = SimpleNamespace(x=-0.7071067811865475, y=0.0, z=0.0, w=0.7071067811865476)
+# Ry(+90°): mesh +Z → world +X (side view for Z-longest body meshes).
+_RY_POS_90 = SimpleNamespace(x=0.0, y=0.7071067811865475, z=0.0, w=0.7071067811865476)
+# Rx(-90°) · Rz(-90°): 120° rotation around (-1,-1,-1)/√3. Puts the
+# horse's body across screen X with back UP. Replaces a simple
+# Rz(-90°) which had the dorsal axis pointing into camera depth — we
+# saw the belly side. Used for Y-longest body meshes whose prefab
+# root rotation is identity (Horse).
+_HORSE_SIDE_VIEW = SimpleNamespace(x=-0.5, y=-0.5, z=-0.5, w=0.5)
+# 120° rotation around (1,1,1)/√3 — side view for Fish, whose prefab
+# root rotation `(90, 0, 180)` plus mesh authoring puts mesh +Y as the
+# ventral (belly) direction. This rotation flips dorsal/ventral so the
+# back is up after the chain.
+_FISH_SIDE_VIEW = SimpleNamespace(x=0.5, y=0.5, z=0.5, w=0.5)
+
+RIG_ROTATION_OVERRIDES: dict[str, Any] = {
+    "Horse": _HORSE_SIDE_VIEW,
+    # Pig prefab root carries a non-identity rotation
+    # `(180, -89, 180) ≡ Ry(91°)` that rotates the entire subtree.
+    # Combined with `Rx(-90°)` at the rig, mesh +Y maps to world +X
+    # after the root rotation — side-view target like Horse.
+    "Pig": _RX_NEG_90,
+    "Fish_Sea_Bass": _FISH_SIDE_VIEW,
+    "Bird_Seagull": _RY_POS_90,
+    "Crab": _RX_NEG_90,
+}
+
+
+def _derive_rig_family(rig_name: str) -> str:
+    """
+    Derive a "family" label from a rig GameObject name. Used to group
+    multi-creature resource prefabs (Crab includes crabs + seagulls;
+    Fish includes fish + seagulls) into per-family `_SOLO_<FAMILY>.png`
+    and `_HERD_<FAMILY>.png` outputs.
+
+    Examples:
+        Crab_Rig            → CRAB
+        Crab_Rig (5)        → CRAB
+        Crab_Rig_single     → CRAB
+        Bird_Seagull_Rig    → BIRD_SEAGULL
+        Fish_Sea_Bass_Rig   → FISH_SEA_BASS
+        Goat_Rig_single     → GOAT
+    """
+    name = re.sub(r"\s*\(\d+\)\s*$", "", rig_name)  # strip " (N)"
+    name = re.sub(r"_single$", "", name)  # strip _single
+    family = name.split("_Rig")[0]
+    if not family:
+        family = rig_name
+    return family.upper().replace(" ", "_")
+
+
+def _load_solo_resource_tag_ids(game_data: Path) -> frozenset[int]:
+    """
+    Resolve the Unity tag id(s) for "SoloResource" by reading TagManager.
+
+    Old World's resource prefabs ship a herd group plus a "SoloResource"-
+    tagged solo rig at the same root; at runtime
+    `ResourceRenderer.EnableSingleObjectMode` toggles which set is
+    visible. We render the herd, so we drop the tagged subtree.
+
+    The TagManager lives in `globalgamemanagers` (no `.assets` extension)
+    and exposes a flat `tags` list for user tags. Unity's serialized
+    `m_Tag` on a GameObject is `20000 + index_in_user_tags` — so the int
+    we compare against is `20000 + tags.index("SoloResource")`.
+
+    Returns a frozenset of ints (typically a single element). Empty when
+    the file is missing or no "SoloResource" tag is registered.
+    """
+    try:
+        import UnityPy
+
+        manager_file = game_data / "globalgamemanagers"
+        if not manager_file.exists():
+            return frozenset()
+        env = UnityPy.Environment()
+        env.load_file(str(manager_file))
+        for obj in env.objects:
+            if obj.type.name != "TagManager":
+                continue
+            tt = obj.read_typetree()
+            tags = tt.get("tags") or []
+            return frozenset(20000 + i for i, name in enumerate(tags) if name == "SoloResource")
+    except Exception:
+        return frozenset()
+    return frozenset()
+
+
 def extract_improvement_meshes(
     game_data: Path | None = None,
     output_dir: Path | None = None,
@@ -712,16 +871,6 @@ def extract_improvement_meshes(
         for r in resources
     )
 
-    # Stale-PNG cleanup: per (output_dir, prefix) bucket, anything not in the
-    # new canonical set goes.
-    stale_count = 0
-    for out_dir, prefix in {(d, p) for _, _, d, p in jobs}:
-        canonical = {f"{prefix}{out}.png" for _, out, d, p in jobs if d == out_dir and p == prefix}
-        for existing in out_dir.glob(f"{prefix}*.png"):
-            if existing.name not in canonical:
-                existing.unlink()
-                stale_count += 1
-
     if verbose:
         print("\n" + "=" * 60)
         print("3D Improvement Mesh Extraction")
@@ -732,8 +881,6 @@ def extract_improvement_meshes(
             f"+ {len(urbans)} urban tiles + {len(resources)} resources via XML, "
             f"+{len(SUPPLEMENTAL_PREFABS)} supplemental prefabs"
         )
-        if stale_count:
-            print(f"Removed {stale_count} stale PNG(s) from previous extraction")
 
     exclude_pattern = load_exclusion_pattern()
     excluded_count = 0
@@ -757,6 +904,69 @@ def extract_improvement_meshes(
         env.load_file(str(game_data / "globalgamemanagers.assets"))
         env.load_file(str(game_data / "resources.assets"))
 
+        # Resolve "SoloResource" tag id once for the resource-job branch.
+        solo_resource_tag_ids = _load_solo_resource_tag_ids(game_data)
+
+        # Probe each resource prefab's immediate-child structure once
+        # so we know whether to apply the per-rig-family split (Crab,
+        # Fish — 2+ SoloResource-tagged children) or the single-rig
+        # path (Goat, Sheep, etc. — 0 or 1 tagged children). Cache the
+        # result for both stale-cleanup canonical-set construction and
+        # the render loop.
+        # Cache: prefab_name -> (root_go, root_local, solo_children, herd_children)
+        prefab_structures: dict[str, tuple[Any, Any, list[Any], list[Any]]] = {}
+        for prefab_name, _, _, prefix in jobs:
+            if prefix != "RESOURCE_3D_":
+                continue
+            if prefab_name in prefab_structures:
+                continue
+            if prefab_name in PREFAB_DECODE_BLACKLIST:
+                continue
+            root_go = find_root_gameobject(env, prefab_name)
+            if root_go is None:
+                continue
+            classified = _classify_immediate_children(root_go, solo_resource_tag_ids)
+            if classified is not None:
+                root_local, solo_children, herd_children = classified
+                prefab_structures[prefab_name] = (
+                    root_go,
+                    root_local,
+                    solo_children,
+                    herd_children,
+                )
+
+        # Stale-PNG cleanup: per (output_dir, prefix) bucket, anything
+        # not in the new canonical set goes. Resource prefabs emit two
+        # variants (_SOLO and _HERD), and multi-creature prefabs (Crab,
+        # Fish) split each variant by rig family.
+        stale_count = 0
+        for out_dir, prefix in {(d, p) for _, _, d, p in jobs}:
+            canonical: set[str] = set()
+            for prefab_name, out, d, p in jobs:
+                if d != out_dir or p != prefix:
+                    continue
+                if prefix == "RESOURCE_3D_":
+                    structure = prefab_structures.get(prefab_name)
+                    if structure is not None:
+                        _, _, solo_children, herd_children = structure
+                        if len(solo_children) >= 2:
+                            for fam in {f for f, _ in solo_children}:
+                                canonical.add(f"{prefix}{out}_SOLO_{fam}.png")
+                            for fam in {f for f, _ in herd_children}:
+                                canonical.add(f"{prefix}{out}_HERD_{fam}.png")
+                            continue
+                    canonical.add(f"{prefix}{out}_SOLO.png")
+                    canonical.add(f"{prefix}{out}_HERD.png")
+                else:
+                    canonical.add(f"{prefix}{out}.png")
+            for existing in out_dir.glob(f"{prefix}*.png"):
+                if existing.name not in canonical:
+                    existing.unlink()
+                    stale_count += 1
+
+        if verbose and stale_count:
+            print(f"Removed {stale_count} stale PNG(s) from previous extraction")
+
         rendered = 0
         skipped_no_prefab = 0
         skipped_no_texture = 0
@@ -770,11 +980,49 @@ def extract_improvement_meshes(
                     print(f"  [EXCLUDED] {output_name}")
                 continue
 
-            out_path = job_out_dir / f"{job_prefix}{output_name}.png"
-            if out_path.exists():
-                if verbose:
-                    print(f"  [EXISTS] {output_name}")
-                continue
+            # Resources are tile-level decorations whose authoring
+            # convention differs from improvements in two ways: they have
+            # no foundation slab to strip, and animal prefabs hide their
+            # visible orientation behind an Animator override that we
+            # approximate by dropping the SMR's saved rotation. Resources
+            # also emit TWO variants per prefab (`_SOLO` and `_HERD`).
+            is_resource = job_prefix == "RESOURCE_3D_"
+
+            if is_resource:
+                structure = prefab_structures.get(prefab_name)
+                is_split = bool(structure is not None and len(structure[2]) >= 2)
+                if is_split and structure is not None:
+                    # Multi-creature prefab (Crab, Fish): expected files
+                    # are `{prefix}{name}_SOLO_{FAMILY}.png` etc.
+                    _, _, solo_children, herd_children = structure
+                    solo_fams = {f for f, _ in solo_children}
+                    herd_fams = {f for f, _ in herd_children}
+                    expected_paths = [
+                        job_out_dir / f"{job_prefix}{output_name}_SOLO_{fam}.png"
+                        for fam in solo_fams
+                    ] + [
+                        job_out_dir / f"{job_prefix}{output_name}_HERD_{fam}.png"
+                        for fam in herd_fams
+                    ]
+                    if expected_paths and all(p.exists() for p in expected_paths):
+                        if verbose:
+                            print(f"  [EXISTS] {output_name}")
+                        continue
+                else:
+                    solo_path = job_out_dir / f"{job_prefix}{output_name}_SOLO.png"
+                    herd_path = job_out_dir / f"{job_prefix}{output_name}_HERD.png"
+                    need_solo = not solo_path.exists()
+                    need_herd = not herd_path.exists()
+                    if not need_solo and not need_herd:
+                        if verbose:
+                            print(f"  [EXISTS] {output_name}")
+                        continue
+            else:
+                out_path = job_out_dir / f"{job_prefix}{output_name}.png"
+                if out_path.exists():
+                    if verbose:
+                        print(f"  [EXISTS] {output_name}")
+                    continue
 
             if prefab_name in PREFAB_DECODE_BLACKLIST:
                 if verbose:
@@ -792,25 +1040,10 @@ def extract_improvement_meshes(
                 skipped_no_prefab += 1
                 continue
 
-            parts = walk_prefab(root_go)
-            # Drop lower-LOD duplicates first (we render LOD0 only).
-            lod_kept = [p for p in parts if not _is_lower_lod_part(p)]
-            # Sample the terrain ground stamp BEFORE dropping splat parts.
-            # The SplatHeightDefault plane's Y is the game's true ground
-            # line — preferred over the density heuristic. None when the
-            # prefab has no ground stamp; strip_plinth_from_obj then falls
-            # back to its density heuristic.
-            cut_y_override = find_ground_y(lod_kept)
-            # Drop splat-shader meshes (heightmaps, alphamaps, water surfaces)
-            # by material name.
-            kept = drop_splat_meshes(lod_kept)
-
-            # Augment with ClutterTransforms-driven instance parts. Sparse
-            # capitals (Greece/Rome/Persia/Carthage/Babylonia/Assyria/Egypt)
-            # carry their building geometry here rather than in MeshFilter
-            # leaves; some urban tiles and improvements may too. This is
-            # always-additive — prefabs without a ClutterTransforms produce
-            # an empty list and behavior is unchanged.
+            # ClutterTransforms-driven parts are NOT tag-filtered (CT is a
+            # separate composition system; SoloResource only tags rig GOs
+            # in the prefab Transform tree). Compute once and share across
+            # walk passes for resources, or use directly for improvements.
             clutter_parts: list[Any] = []
             try:
                 cts = find_clutter_transforms_in_prefab(root_go)
@@ -834,6 +1067,218 @@ def extract_improvement_meshes(
                     f"{total_models} models, {total_instances} instances"
                 )
 
+            if is_resource and is_split and structure is not None:
+                # Multi-creature prefab: render each (variant, family)
+                # combination as its own file. Walk per-family from
+                # each immediate-child rig with parent_world=root_local
+                # so each part's world matrix preserves the prefab
+                # root's TRS. CT parts (if any) are added to every
+                # family render — they're a separate composition layer.
+                _, root_local, solo_children, herd_children = structure
+                family_groups: list[tuple[str, str, list[Any], Path]] = []
+                # solo families (one path per family)
+                for fam in sorted({f for f, _ in solo_children}):
+                    gos = [go for f, go in solo_children if f == fam]
+                    fam_path = job_out_dir / f"{job_prefix}{output_name}_SOLO_{fam}.png"
+                    family_groups.append(("SOLO", fam, gos, fam_path))
+                # herd families
+                for fam in sorted({f for f, _ in herd_children}):
+                    gos = [go for f, go in herd_children if f == fam]
+                    fam_path = job_out_dir / f"{job_prefix}{output_name}_HERD_{fam}.png"
+                    family_groups.append(("HERD", fam, gos, fam_path))
+
+                any_failed = False
+                files_written = 0
+                for variant, fam, gos, out_p in family_groups:
+                    if out_p.exists():
+                        continue
+                    walk_parts: list[Any] = []
+                    for go in gos:
+                        walk_parts.extend(
+                            walk_prefab(
+                                go,
+                                drop_animated_smr_rotation=True,
+                                parent_world=root_local,
+                                rig_rotation_overrides=RIG_ROTATION_OVERRIDES,
+                            )
+                        )
+                    lod_kept = [p for p in walk_parts if not _is_lower_lod_part(p)]
+                    combined = drop_splat_meshes(lod_kept) + clutter_parts
+                    if not combined:
+                        if verbose:
+                            print(f"  [SKIP] {output_name} {variant}_{fam} - no usable mesh")
+                        skipped_no_geometry += 1
+                        any_failed = True
+                        continue
+                    obj_str = bake_to_obj(combined, pre_rotation_y_deg=180.0)
+                    if not obj_str:
+                        if verbose:
+                            print(f"  [SKIP] {output_name} {variant}_{fam} - empty bake")
+                        skipped_no_geometry += 1
+                        any_failed = True
+                        continue
+                    tex_img = find_diffuse_for_prefab(combined)
+                    if tex_img is None:
+                        if verbose:
+                            print(f"  [SKIP] {output_name} {variant}_{fam} - no diffuse texture")
+                        skipped_no_texture += 1
+                        any_failed = True
+                        continue
+                    try:
+                        img = render_mesh_to_image(obj_str, tex_img, force_upright=True)
+                        img.save(out_p, optimize=False)
+                        files_written += 1
+                        del img
+                        del tex_img
+                        gc.collect()
+                    except Exception as e:
+                        if verbose:
+                            print(f"  [ERROR] {output_name} {variant}_{fam} - render failed: {e}")
+                        render_errors += 1
+                        any_failed = True
+                if files_written > 0 and not any_failed:
+                    rendered += 1
+                    if verbose:
+                        n_solo = len({f for f, _ in solo_children})
+                        n_herd = len({f for f, _ in herd_children})
+                        print(
+                            f"  [OK] {output_name} (split: {n_solo} solo + {n_herd} herd families)"
+                        )
+                elif files_written > 0:
+                    # Partial success — count the prefab as rendered for the
+                    # progress bar but the per-variant skip counters above
+                    # already reflect the partial fail.
+                    rendered += 1
+                continue
+
+            if is_resource:
+                # Two walk passes — same drop_animated_smr_rotation, opposite
+                # tag filters. CT parts shared. When solo_walk is empty (no
+                # SoloResource subtree, e.g. CT-only static resources like
+                # Stone/Citrus), we render the herd variant once and save
+                # the same image to both files.
+                solo_walk = walk_prefab(
+                    root_go,
+                    drop_animated_smr_rotation=True,
+                    include_only_tag_ids=solo_resource_tag_ids,
+                    rig_rotation_overrides=RIG_ROTATION_OVERRIDES,
+                )
+                herd_walk = walk_prefab(
+                    root_go,
+                    drop_animated_smr_rotation=True,
+                    exclude_tag_ids=solo_resource_tag_ids,
+                    rig_rotation_overrides=RIG_ROTATION_OVERRIDES,
+                )
+
+                # Default-arg bindings to capture per-iteration values; ruff
+                # B023 otherwise flags the closure as referencing the loop
+                # variables `clutter_parts` and `output_name`.
+                def _build_combined(
+                    walk_parts: list[Any], _clutter: list[Any] = clutter_parts
+                ) -> list[Any]:
+                    lod_kept = [p for p in walk_parts if not _is_lower_lod_part(p)]
+                    return drop_splat_meshes(lod_kept) + _clutter
+
+                def _render_combined(
+                    combined: list[Any], _name: str = output_name
+                ) -> tuple[Any, str]:
+                    """Returns (PIL.Image | None, status). Status is one of
+                    'ok', 'no_geometry', 'no_texture', 'render_error'."""
+                    if not combined:
+                        return None, "no_geometry"
+                    obj_str = bake_to_obj(combined, pre_rotation_y_deg=180.0)
+                    if not obj_str:
+                        return None, "no_geometry"
+                    tex_img = find_diffuse_for_prefab(combined)
+                    if tex_img is None:
+                        return None, "no_texture"
+                    try:
+                        return render_mesh_to_image(obj_str, tex_img, force_upright=True), "ok"
+                    except Exception as e:
+                        if verbose:
+                            print(f"  [ERROR] {_name} - render failed: {e}")
+                        return None, "render_error"
+
+                herd_combined = _build_combined(herd_walk)
+                herd_img, herd_status = _render_combined(herd_combined)
+                if herd_status != "ok":
+                    if verbose:
+                        if herd_status == "no_geometry":
+                            print(f"  [SKIP] {output_name} - no usable mesh parts in prefab")
+                        elif herd_status == "no_texture":
+                            print(
+                                f"  [SKIP] {output_name} - no diffuse texture in prefab materials"
+                            )
+                    if herd_status == "no_geometry":
+                        skipped_no_geometry += 1
+                    elif herd_status == "no_texture":
+                        skipped_no_texture += 1
+                    else:
+                        render_errors += 1
+                    continue
+
+                if solo_walk:
+                    solo_combined = _build_combined(solo_walk)
+                    solo_img, solo_status = _render_combined(solo_combined)
+                    if solo_status != "ok":
+                        # Solo subtree exists but failed to render — surface
+                        # the issue and skip the whole prefab to avoid
+                        # asymmetric output.
+                        if verbose:
+                            print(f"  [SKIP] {output_name} - solo render failed ({solo_status})")
+                        if solo_status == "no_geometry":
+                            skipped_no_geometry += 1
+                        elif solo_status == "no_texture":
+                            skipped_no_texture += 1
+                        else:
+                            render_errors += 1
+                        continue
+                    has_solo_subtree = True
+                else:
+                    # No SoloResource subtree — solo == herd content.
+                    solo_img = herd_img
+                    has_solo_subtree = False
+
+                try:
+                    if need_herd:
+                        herd_img.save(herd_path, optimize=False)
+                    if need_solo:
+                        solo_img.save(solo_path, optimize=False)
+                    rendered += 1
+                    if verbose:
+                        marker = "(solo+herd)" if has_solo_subtree else "(solo=herd)"
+                        print(
+                            f"  [OK] {output_name} {marker} "
+                            f"({len(solo_walk)} solo, {len(herd_walk)} herd)"
+                        )
+                    del herd_img
+                    if has_solo_subtree:
+                        del solo_img
+                    gc.collect()
+                except Exception as e:
+                    if verbose:
+                        print(f"  [ERROR] {output_name} - save failed: {e}")
+                    render_errors += 1
+                continue
+
+            # Improvements path — single render, with plinth strip.
+            parts = walk_prefab(
+                root_go,
+                drop_animated_smr_rotation=False,
+                exclude_tag_ids=None,
+            )
+            # Drop lower-LOD duplicates first (we render LOD0 only).
+            lod_kept = [p for p in parts if not _is_lower_lod_part(p)]
+            # Sample the terrain ground stamp BEFORE dropping splat parts.
+            # The SplatHeightDefault plane's Y is the game's true ground
+            # line — preferred over the density heuristic. None when the
+            # prefab has no ground stamp; strip_plinth_from_obj then falls
+            # back to its density heuristic.
+            cut_y_override = find_ground_y(lod_kept)
+            # Drop splat-shader meshes (heightmaps, alphamaps, water surfaces)
+            # by material name.
+            kept = drop_splat_meshes(lod_kept)
+
             combined = kept + clutter_parts
             if not combined:
                 if verbose:
@@ -842,6 +1287,9 @@ def extract_improvement_meshes(
                 continue
 
             obj_str = bake_to_obj(combined, pre_rotation_y_deg=180.0)
+            # The 180° Y pre-rotation above is a camera convention — meshes
+            # are authored facing -Z and we render from +Z — and applies
+            # uniformly to both improvements and resources.
             obj_str = strip_plinth_from_obj(obj_str, cut_y_override=cut_y_override)
             tex_img = find_diffuse_for_prefab(combined)
             if tex_img is None:
