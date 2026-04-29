@@ -55,6 +55,7 @@ ASSET_FILES: tuple[str, ...] = (
     "asset-eoti.xml",
     "asset-wd.xml",
 )
+TERRAIN_FILES: tuple[str, ...] = ("terrain.xml",)
 
 
 @dataclass(frozen=True)

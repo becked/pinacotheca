@@ -800,19 +800,24 @@ def extract_improvement_meshes(
         load_resource_assets,
         load_urban_assets,
     )
+    from pinacotheca.biome_base import load_biome_base
     from pinacotheca.clutter_transforms import (
         clutter_to_prefab_parts,
         find_clutter_transforms_in_prefab,
     )
+    from pinacotheca.layered_render import render_layered_ground
     from pinacotheca.prefab import (
         bake_to_obj,
         drop_splat_meshes,
         find_diffuse_for_prefab,
         find_ground_y,
+        find_normal_map_for_prefab,
+        find_packed_pbr_for_prefab,
         find_root_gameobject,
         strip_plinth_from_obj,
         walk_prefab,
     )
+    from pinacotheca.pvt_splats import find_pvt_splats_in_prefab
 
     if game_data is None:
         game_data = find_game_data()
@@ -871,6 +876,13 @@ def extract_improvement_meshes(
         for r in resources
     )
 
+    # Capitals + urban tiles get the layered ground render: a TERRAIN_TEMPERATE
+    # biome base + per-nation TerrainTexturePVTSplat planes underneath the
+    # buildings, so the in-game per-nation paint (Egyptian sand roads, Greek
+    # mosaic, etc.) shows through. Smaller improvements stay on the existing
+    # transparent-bg path. See `src/pinacotheca/layered_render.py`.
+    layered_prefabs: set[str] = {c.prefab_name for c in capitals} | {u.prefab_name for u in urbans}
+
     if verbose:
         print("\n" + "=" * 60)
         print("3D Improvement Mesh Extraction")
@@ -903,6 +915,10 @@ def extract_improvement_meshes(
         # `clutter_transforms.find_object_by_path_id`.
         env.load_file(str(game_data / "globalgamemanagers.assets"))
         env.load_file(str(game_data / "resources.assets"))
+
+        # Cache the biome base used by the layered ground path. Loaded once
+        # per extraction run; capitals + urbans all reuse it.
+        biome_base = load_biome_base(env, xml_dir)
 
         # Resolve "SoloResource" tag id once for the resource-job branch.
         solo_resource_tag_ids = _load_solo_resource_tag_ids(game_data)
@@ -1124,8 +1140,16 @@ def extract_improvement_meshes(
                         skipped_no_texture += 1
                         any_failed = True
                         continue
+                    packed_pbr = find_packed_pbr_for_prefab(combined)
+                    normal_map = find_normal_map_for_prefab(combined)
                     try:
-                        img = render_mesh_to_image(obj_str, tex_img, force_upright=True)
+                        img = render_mesh_to_image(
+                            obj_str,
+                            tex_img,
+                            force_upright=True,
+                            packed_pbr_image=packed_pbr,
+                            normal_map_image=normal_map,
+                        )
                         img.save(out_p, optimize=False)
                         files_written += 1
                         del img
@@ -1192,8 +1216,19 @@ def extract_improvement_meshes(
                     tex_img = find_diffuse_for_prefab(combined)
                     if tex_img is None:
                         return None, "no_texture"
+                    packed_pbr = find_packed_pbr_for_prefab(combined)
+                    normal_map = find_normal_map_for_prefab(combined)
                     try:
-                        return render_mesh_to_image(obj_str, tex_img, force_upright=True), "ok"
+                        return (
+                            render_mesh_to_image(
+                                obj_str,
+                                tex_img,
+                                force_upright=True,
+                                packed_pbr_image=packed_pbr,
+                                normal_map_image=normal_map,
+                            ),
+                            "ok",
+                        )
                     except Exception as e:
                         if verbose:
                             print(f"  [ERROR] {_name} - render failed: {e}")
@@ -1286,6 +1321,33 @@ def extract_improvement_meshes(
                 skipped_no_geometry += 1
                 continue
 
+            # Layered ground path: capitals + urban tiles get a biome base
+            # quad + per-nation PVT splat planes composited underneath the
+            # buildings. See `src/pinacotheca/layered_render.py`.
+            if prefab_name in layered_prefabs:
+                try:
+                    pvt_planes = find_pvt_splats_in_prefab(root_go)
+                except Exception as e:
+                    if verbose:
+                        print(f"  [WARN] {output_name} - PVT walk failed: {e}")
+                    pvt_planes = []
+                try:
+                    img = render_layered_ground(combined, pvt_planes, biome_base, env)
+                    img.save(out_path, optimize=False)
+                    rendered += 1
+                    if verbose:
+                        print(
+                            f"  [OK] {output_name} (layered: biome + "
+                            f"{len(pvt_planes)} PVT plane(s) + {len(combined)} parts)"
+                        )
+                    del img
+                    gc.collect()
+                except Exception as e:
+                    if verbose:
+                        print(f"  [ERROR] {output_name} - layered render failed: {e}")
+                    render_errors += 1
+                continue
+
             obj_str = bake_to_obj(combined, pre_rotation_y_deg=180.0)
             # The 180° Y pre-rotation above is a camera convention — meshes
             # are authored facing -Z and we render from +Z — and applies
@@ -1302,9 +1364,17 @@ def extract_improvement_meshes(
                     print(f"  [SKIP] {output_name} - empty bake output")
                 skipped_no_geometry += 1
                 continue
+            packed_pbr = find_packed_pbr_for_prefab(combined)
+            normal_map = find_normal_map_for_prefab(combined)
 
             try:
-                img = render_mesh_to_image(obj_str, tex_img, force_upright=True)
+                img = render_mesh_to_image(
+                    obj_str,
+                    tex_img,
+                    force_upright=True,
+                    packed_pbr_image=packed_pbr,
+                    normal_map_image=normal_map,
+                )
                 img.save(out_path, optimize=False)
                 rendered += 1
                 if verbose:

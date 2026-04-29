@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
-from pinacotheca.renderer import orthographic_matrix
+from pinacotheca.renderer import orthographic_matrix, render_mesh_to_image
 
 
 def test_orthographic_matrix_unit_box() -> None:
@@ -47,3 +48,84 @@ def test_orthographic_matrix_preserves_xz_spacing() -> None:
     np.testing.assert_allclose(near_clip[0], far_clip[0], atol=1e-6)
     # And it's proportional to input X (here 0.5 with half-width 2 → 0.25).
     np.testing.assert_allclose(near_clip[0], 0.25, atol=1e-6)
+
+
+def _solid_texture():
+    """1×1 white texture — enough for the renderer to bind a sampler."""
+    from PIL import Image
+
+    return Image.new("RGBA", (1, 1), (255, 255, 255, 255))
+
+
+def _unit_quad_obj() -> str:
+    """A small horizontal quad at y=0 spanning [-1, 1] in X and Z.
+
+    Winding is reversed (3-2-1, 4-3-1) so the camera sees the front face
+    under OpenGL's CCW convention with CULL_FACE enabled — matches what
+    `bake_to_obj` emits for prefab parts viewed from above.
+    """
+    return (
+        "v -1 0 -1\n"
+        "v  1 0 -1\n"
+        "v  1 0  1\n"
+        "v -1 0  1\n"
+        "vt 0 0\n"
+        "vt 1 0\n"
+        "vt 1 1\n"
+        "vt 0 1\n"
+        "vn 0 1 0\n"
+        "vn 0 1 0\n"
+        "vn 0 1 0\n"
+        "vn 0 1 0\n"
+        "f 3/3/3 2/2/2 1/1/1\n"
+        "f 4/4/4 3/3/3 1/1/1\n"
+    )
+
+
+def _opengl_available() -> bool:
+    try:
+        import moderngl  # noqa: F401
+
+        ctx = moderngl.create_standalone_context()
+        ctx.release()
+        return True
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not _opengl_available(), reason="headless OpenGL context unavailable")
+def test_bbox_override_shrinks_the_footprint() -> None:
+    """A render with `bbox_override` set to 4× the mesh's natural extent
+    frames the camera around a much larger box, so the quad's pixel
+    footprint shrinks. Without the override the same mesh fills more of
+    the frame.
+    """
+    obj = _unit_quad_obj()
+    tex = _solid_texture()
+
+    no_override = render_mesh_to_image(
+        obj, tex, width=256, height=256, autocrop=False, force_upright=True
+    )
+    big_bbox = (
+        np.array([-4.0, 0.0, -4.0]),
+        np.array([4.0, 0.0, 4.0]),
+    )
+    overridden = render_mesh_to_image(
+        obj,
+        tex,
+        width=256,
+        height=256,
+        autocrop=False,
+        force_upright=True,
+        bbox_override=big_bbox,
+    )
+
+    no_override_arr = np.asarray(no_override.convert("RGBA"))
+    overridden_arr = np.asarray(overridden.convert("RGBA"))
+
+    no_override_pixels = int((no_override_arr[..., 3] > 0).sum())
+    overridden_pixels = int((overridden_arr[..., 3] > 0).sum())
+
+    # The 4×-larger bbox should produce a much smaller mesh footprint.
+    assert overridden_pixels > 0  # quad still visible
+    assert overridden_pixels < no_override_pixels // 2

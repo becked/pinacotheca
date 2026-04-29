@@ -135,6 +135,120 @@ The decompiled `TerrainTextureRenderer.cs:1591` (`RenderHeightSplats`) shows the
 
 Our isolated renders have no terrain to submerge into, so the ground stamp's Y becomes our cut line: anything below is what the in-game terrain would have hidden.
 
+## Ground layer: capitals + urban tiles
+
+Capital and urban-tile renders go through a layered path that adds a hex
+ground tile + per-nation paint underneath the building geometry. The
+single-piece improvements above stay on the original transparent-bg
+path; only the 12 capitals + 10 urban tiles get the layered treatment.
+
+Three layers, composited bottom-up by `src/pinacotheca/layered_render.py`:
+
+1. **Biome base** — `TilePlains_01` (resolved from `TERRAIN_TEMPERATE` via
+   the `terrain.xml → assetVariation.xml → asset.xml` chain). The prefab
+   itself is a `TerrainTexturePVTSplat` plane with no MeshRenderer
+   material; `Grass_Tile_01_basecolor × Hex_Mask` comes through the
+   parsed splat fields and is pre-composed once in `biome_base.py`.
+2. **Per-nation `TerrainTexturePVTSplat` planes** from the capital/urban
+   prefab (Egyptian sand roads, Greek mosaic, Babylonian terraces, etc.),
+   sorted ascending by `sortingOffset` so the in-game stacking order is
+   preserved. `find_pvt_splats_in_prefab` (in `pvt_splats.py`) walks the
+   prefab tree by script class — same pattern as `find_clutter_transforms_
+   in_prefab` — and `compose_pvt_texture` produces an RGBA image as
+   `albedo.rgb × tint.rgb` with alpha = `alpha[channel] × tint.a`,
+   trusting mesh UVs (no per-tile texture replication).
+3. **Existing combined building/clutter parts** on top.
+
+All three layers share one orthographic camera (the renderer's existing
+`force_upright=True` ortho path). To make this work, `render_mesh_to_image`
+gained an opt-in `bbox_override` parameter: when provided, the camera is
+framed around that combined bbox instead of the per-call OBJ. The
+orchestrator computes the bbox once from the union of every layer's
+baked OBJ vertices, then renders each layer with `autocrop=False` and the
+shared bbox, alpha-composites them in PIL, and runs one final
+`autocrop_with_padding` on the result. The renderer pipeline is otherwise
+unchanged — same shader, same ortho frustum, same alpha-cutout.
+
+Heightmap displacement (`TerrainHeightSplat`) is intentionally not
+rendered. We still parse any height splats we encounter in the walker
+as a side-effect drift check (the body-size assertion catches a future
+game patch reordering fields), but discard the parsed result.
+
+`MeshFilter` capitals (Maurya/Tamil/Yuezhi/Aksum/Hittite) ship their own
+baked ground inside the prefab geometry; the layered ground composes
+underneath, so their existing plinths still read correctly on top. Yuezhi
+specifically walks to zero PVT planes; the orchestrator handles that case
+by emitting biome + buildings only.
+
+### Biome plane scaling
+
+`TilePlains_01` is authored at ~18×18 game units — about 2× one in-game
+hex (verified via `Tile.cs:1952`'s `getCornerTileOffset`, where the
+corner-to-center distance is 5 units, giving an XZ bbox of ~8.66 × 10
+per hex). The game relies on adjacent tiles' splats overlapping each
+other for inter-tile blending; for our standalone icons we have no
+neighbors, so the oversize hex would just leave a giant empty oval
+around the rendered city.
+
+`render_layered_ground` rescales the biome plane around origin to
+match `union(buildings_xz_bbox, nation_pvt_xz_bbox)`. Uniform scale by
+`max(target_x/biome_x, target_z/biome_z)`, floored at 0.2× to guard
+against degenerate prefabs. The plane mesh's `Hex_Mask` alpha falloff
+preserves the soft hex silhouette at the new footprint, so the icon
+crops tightly around the buildings + nation paint instead of bleeding
+past them.
+
+## Lighting envelope
+
+The fragment shader applies a directional shading factor with a
+configurable floor:
+
+```glsl
+float ndotl = dot(N, light_dir);                         // [-1, 1]
+float diffuse = mix(min_brightness, 1.0, ndotl*0.5+0.5); // [floor, 1]
+```
+
+Two callers, two values:
+
+- **Buildings, units, improvements**: `min_brightness = 0.4`. 60% range
+  on `diffuse`. Back-faces darken to ~0.4 of source albedo, lit faces
+  hit 1.0. Restores face-by-face contrast that earlier iterations
+  (0.7 floor) had washed out.
+- **Ground layers** (biome quad + per-nation PVT planes,
+  `flat_lighting=True`): `min_brightness = 1.0`. Skips directional
+  shading entirely — these are flat horizontal Quads where the
+  directional term would just dim every pixel by the same factor.
+
+The 0.4 literal is the tuning knob; `renderer.py` near
+`prog["min_brightness"].value`. See `docs/material-rendering.md` for
+the full shader detail and the iteration history.
+
+## Material rendering (normal mapping, occlusion, team color)
+
+Beyond the diffuse texture, the renderer also samples (when available):
+
+- **Normal maps** (`_BumpMap`, DXT5nm-encoded) for surface microgeometry
+  — brick courses, panel breaks, decorative carvings. Per-vertex
+  tangents flow through `bake_to_obj` as a custom `vtg x y z w` OBJ
+  extension. The fragment shader builds a TBN matrix and perturbs the
+  geometric normal.
+- **Occlusion** from the packed
+  `_MetalicRoughnessOcclusionTeamColor` texture's B channel. Applied
+  with `occlusion_strength = 0.6` so concave joints read with depth
+  without crushing brick walls. A B-mean threshold protects
+  Library-style `_DetailTexture` materials with a different channel
+  convention.
+- **Neutral team color**: hand-painted pink placeholders in building
+  diffuse textures (intended for runtime tinting via
+  `_PrimaryTeamColor`) are swapped to neutral gray as a pre-process
+  inside `find_diffuse_for_prefab`. Pink range:
+  `R>200 ∧ 130<G<200 ∧ 130<B<200`, replaced with `(180, 180, 180)`.
+
+These apply to every render that uses the buildings shader path — not
+just the layered ground. See `docs/material-rendering.md` for the
+shader source, channel layouts, the DXT5nm swizzle math, and tuning
+knobs.
+
 ## Camera orientation: the 180° flip
 
 The in-game world camera (`GameCamera.cs:54`, Euler `(45, 0, 0)`) sits south of its target and views the **-Z face** of buildings. By Unity convention an object's `transform.forward = +Z`, but Old World assets are authored with their **front facing -Z** so the in-game camera sees the entrance/decorated side.
@@ -159,8 +273,11 @@ A small `PREFAB_DECODE_BLACKLIST` constant in `extractor.py` skips prefabs whose
 
 - `src/pinacotheca/asset_index.py` — XML chain parser. `load_improvement_assets(xml_dir)` returns one `ImprovementAsset` per unique `zIconName`. Pure-Python, no UnityPy dep. Reads `improvement.xml` + `improvement-event.xml`, `assetVariation.xml` + DLC variants, `asset.xml` + DLC variants.
 - `src/pinacotheca/extractor.py` — `extract_improvement_meshes()` calls `load_improvement_assets()` then iterates `+ SUPPLEMENTAL_PREFABS`. Includes `PREFAB_DECODE_BLACKLIST` for SIGSEGV-causing prefabs. Also `build_texture_lookup()` (used by unit extraction) and `DIFFUSE_TEXTURE_SUFFIXES` constant.
-- `src/pinacotheca/renderer.py` — `render_mesh_to_image()` with `force_upright` parameter for buildings (always Y-up, 30° tilt, 45° FOV).
-- `src/pinacotheca/prefab.py` — GameObject/Transform walker, world-matrix composer, OBJ baker (`bake_to_obj` with optional `pre_rotation_y_deg`), splat material constants and `find_ground_y` / `find_geometry_y_min` helpers, `strip_plinth_from_obj` with optional `cut_y_override`.
+- `src/pinacotheca/renderer.py` — `render_mesh_to_image()` with `force_upright` for buildings (Y-up, 30° tilt, ortho), `bbox_override` for shared-camera layered passes, `flat_lighting` for ground layers, plus optional `normal_map_image` and `packed_pbr_image` for tangent-space normal mapping and occlusion. See `docs/material-rendering.md` for the shader detail.
+- `src/pinacotheca/prefab.py` — GameObject/Transform walker, world-matrix composer, OBJ baker (`bake_to_obj` with optional `pre_rotation_y_deg`, emits per-vertex `vtg` tangent lines when present), splat material constants and `find_ground_y` / `find_geometry_y_min` helpers, `strip_plinth_from_obj` with optional `cut_y_override`. Also the texture-search helpers (`find_diffuse_for_prefab`, `find_normal_map_for_prefab`, `find_packed_pbr_for_prefab`) and `apply_neutral_team_color`.
+- `src/pinacotheca/biome_base.py` — resolves `TERRAIN_TEMPERATE` to `TilePlains_01` and pre-composes its hex-shaped grass diffuse for the layered ground bottom layer.
+- `src/pinacotheca/pvt_splats.py` — hand-parser for `TerrainTexturePVTSplat` and `TerrainHeightSplat` MonoBehaviour bodies; prefab-tree walker; per-plane `albedo × alpha` compositor.
+- `src/pinacotheca/layered_render.py` — multi-pass orchestrator for capitals + urban tiles. Composes biome + per-nation PVT planes + buildings under one shared camera; rescales the biome plane to fit the buildings/PVT footprint.
 - `tests/test_asset_index.py` — synthetic-XML tests for the chain (SingleAsset, aiRandomAssets, DLC merge, dedupe-by-zIconName, broken-chain skipping).
 - `tests/test_prefab.py` — synthetic unit tests for the prefab math (quaternion → matrix, TRS chain, normal transform under non-uniform scale, X-flip-once, winding flip on negative scale, splat-Y helpers, `cut_y_override` safety guards, `pre_rotation_y_deg` Z-flip).
 - `scripts/probes/` — exploration scripts used during the investigation (mesh enumerator, texture finder, prefab inspector). Not required at runtime.

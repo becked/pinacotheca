@@ -450,6 +450,21 @@ def bake_to_obj(parts: list[PrefabPart], *, pre_rotation_y_deg: float = 0.0) -> 
 
     Parts with no usable mesh data are skipped silently.
 
+    **Custom OBJ extension:** when a mesh has authored tangents
+    (`MeshHandler.m_Tangents`), emits one `vtg x y z w` line per vertex,
+    in the same order and indexing as the `v` lines. Faces still use the
+    standard `v/vt/vn` syntax — tangents are looked up by vertex index
+    in `parse_obj` / `build_vertex_buffer`. The X is negated and `w`
+    sign-flipped to match the X-flip we apply to positions and normals
+    (the cross product N × T flips handedness with the coordinate
+    reflection, so the bitangent sign in `w` flips to compensate). When
+    a mesh has no tangents, no `vtg` lines are emitted; downstream
+    callers default to `(1, 0, 0, 1)` per vertex.
+
+    `vtg` is non-standard OBJ — this function and `parse_obj` are an
+    internal pipe; don't expect Blender or other external tools to
+    preserve tangents written this way.
+
     Args:
         pre_rotation_y_deg: optional Y-axis rotation (in degrees) applied
             to every part's world matrix before baking. Used by the
@@ -521,6 +536,19 @@ def bake_to_obj(parts: list[PrefabPart], *, pre_rotation_y_deg: float = 0.0) -> 
                 wny = nm3[1, 0] * nx + nm3[1, 1] * ny + nm3[1, 2] * nz
                 wnz = nm3[2, 0] * nx + nm3[2, 1] * ny + nm3[2, 2] * nz
                 sb.append(f"vn {-wnx:.9G} {wny:.9G} {wnz:.9G}\n")
+        if handler.m_Tangents:
+            for t in handler.m_Tangents:
+                tx, ty, tz, tw = float(t[0]), float(t[1]), float(t[2]), float(t[3])
+                # Tangent xyz transforms as a true vector under m3 (NOT the
+                # inverse-transpose used for normals — tangents lie in the
+                # surface plane and follow geometric scale/rotation directly).
+                wtx = m3[0, 0] * tx + m3[0, 1] * ty + m3[0, 2] * tz
+                wty = m3[1, 0] * tx + m3[1, 1] * ty + m3[1, 2] * tz
+                wtz = m3[2, 0] * tx + m3[2, 1] * ty + m3[2, 2] * tz
+                # Negate X (matches positions/normals) and flip bitangent
+                # sign in w to compensate for the cross-product handedness
+                # change when the coordinate frame reflects.
+                sb.append(f"vtg {-wtx:.9G} {wty:.9G} {wtz:.9G} {-tw:.9G}\n")
 
         # Faces — reverse winding for right-handed OBJ. Optionally double-
         # reverse if part has negative scale (cancels back to left-handed
@@ -551,6 +579,19 @@ def bake_to_obj(parts: list[PrefabPart], *, pre_rotation_y_deg: float = 0.0) -> 
 # order of preference. HDRP first (newer Indus DLC assets), then URP,
 # then legacy main texture, then HDRP base color.
 _DIFFUSE_PROPERTY_KEYS = ("_BaseColorMap", "_BaseMap", "_MainTex", "_BaseColor")
+
+# Material property keys for the tangent-space normal map (DXT5nm-encoded
+# in Old World's HDRP-style materials).
+_NORMAL_PROPERTY_KEYS = ("_BumpMap", "_NormalMap")
+
+# Material property keys for the packed metallic/roughness/occlusion/
+# team-color texture. We only sample the occlusion channel today (B), but
+# the packed binding gives the renderer access to the full RGBA in case
+# we add metallic/roughness later.
+_PACKED_PBR_PROPERTY_KEYS = (
+    "_MetalicRoughnessOcclusionTeamColor",
+    "_NormalMetalicRoughness",
+)
 
 
 def _decode_texture(tex: Any) -> Image.Image | None:
@@ -603,16 +644,19 @@ def _decode_texture(tex: Any) -> Image.Image | None:
     return img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
 
 
-def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
-    """
-    Pick the largest-area diffuse texture across all the prefab's
-    materials. Returns a PIL Image or None if no usable texture is
-    found.
+def _find_texture_for_prefab(
+    parts: list[PrefabPart], allowed_keys: tuple[str, ...]
+) -> Image.Image | None:
+    """Pick the largest-area decoded texture among material entries whose
+    shader property key is in ``allowed_keys``. Returns None when no entry
+    matches.
 
-    Capitals overwhelmingly use one shared albedo across parts; pick
-    the largest by pixel area to avoid grabbing a small detail texture.
+    Common helper for `find_diffuse_for_prefab`, `find_normal_map_for_prefab`,
+    and `find_packed_pbr_for_prefab` — capitals overwhelmingly use one
+    shared map per slot across parts, and the largest-area pick prevents
+    a small atlas/detail texture from winning over the prefab's main map.
     """
-    best_image: Any = None
+    best_image: Image.Image | None = None
     best_area = 0
     seen_pathids: set[int] = set()
 
@@ -636,7 +680,7 @@ def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
                     key = getattr(entry, "first", None) or getattr(entry, "key", None)
                     tex_env = getattr(entry, "second", None) or getattr(entry, "value", None)
                 key_name = key if isinstance(key, str) else getattr(key, "name", str(key))
-                if key_name not in _DIFFUSE_PROPERTY_KEYS:
+                if key_name not in allowed_keys:
                     continue
                 tex_pptr = getattr(tex_env, "m_Texture", None)
                 if tex_pptr is None or not bool(tex_pptr):
@@ -658,7 +702,79 @@ def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
                     best_area = area
                     best_image = img
 
-    return best_image  # type: ignore[no-any-return]
+    return best_image
+
+
+def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
+    """Return the prefab's diffuse texture with neutral-color team-tint
+    substitution applied, or None if no diffuse is found.
+
+    The neutral substitution swaps hand-painted pink placeholder pixels
+    (intended for runtime team-color tinting via `_PrimaryTeamColor`) for
+    a stone-gray. See `apply_neutral_team_color` for details.
+    """
+    img = _find_texture_for_prefab(parts, _DIFFUSE_PROPERTY_KEYS)
+    if img is None:
+        return None
+    return apply_neutral_team_color(img)
+
+
+def find_normal_map_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
+    """Return the prefab's tangent-space normal map (DXT5nm-encoded) or None."""
+    return _find_texture_for_prefab(parts, _NORMAL_PROPERTY_KEYS)
+
+
+def find_packed_pbr_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
+    """Return the prefab's packed metallic/roughness/occlusion/team-color
+    texture or None.
+
+    The renderer uses only the B (occlusion) channel today; the rest is
+    decoded but unread. We refuse the texture when its B-channel mean is
+    below 0.5 — that signals a different channel convention (e.g.,
+    `Library_DetailTexture` puts other data in B with mean ~0.17) where
+    treating B as occlusion would crush the entire surface to dark. When
+    we refuse here, the renderer falls back to no occlusion modulation.
+    """
+    img = _find_texture_for_prefab(parts, _PACKED_PBR_PROPERTY_KEYS)
+    if img is None:
+        return None
+    arr = np.asarray(img.convert("RGBA"))
+    if arr.size == 0:
+        return None
+    mean_b = float(arr[..., 2].mean()) / 255.0
+    if mean_b < 0.5:
+        logger.debug(
+            "Packed PBR texture mean(B)=%.3f < 0.5 — skipping occlusion modulation "
+            "(likely a non-occlusion channel layout).",
+            mean_b,
+        )
+        return None
+    return img
+
+
+def apply_neutral_team_color(diffuse: Image.Image) -> Image.Image:
+    """Replace hand-painted pink team-color placeholder pixels with neutral gray.
+
+    Several Old World building diffuse textures (Aksum's most visibly)
+    carry pink-stripe regions intended for runtime tinting via the
+    `_PrimaryTeamColor` shader uniform. Our offline renderer has no
+    player context, so the tint never happens and raw pink reads through.
+    We swap that pink range to mid-gray so icons show stone trim
+    instead of cotton-candy.
+
+    Range is intentionally narrow (R > 200 ∧ 130 < G < 200 ∧
+    130 < B < 200) to avoid touching legitimate pink art — Egyptian
+    frescoes, decorative motifs, etc. that the artist wants pink.
+    """
+    arr = np.asarray(diffuse.convert("RGBA")).copy()
+    r = arr[..., 0]
+    g = arr[..., 1]
+    b = arr[..., 2]
+    pink = (r > 200) & (g > 130) & (g < 200) & (b > 130) & (b < 200)
+    arr[pink, 0] = 180
+    arr[pink, 1] = 180
+    arr[pink, 2] = 180
+    return Image.fromarray(arr, mode="RGBA")
 
 
 # Material name patterns identifying Old World's terrain splat-shader meshes.

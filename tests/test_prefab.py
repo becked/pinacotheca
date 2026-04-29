@@ -130,6 +130,65 @@ class _MeshObj:
         return self._mesh
 
 
+def test_bake_to_obj_emits_vtg_when_tangents_present(monkeypatch: Any) -> None:
+    """When the mesh has tangents, bake_to_obj emits one `vtg x y z w`
+    line per vertex with X negated (matches positions/normals X-flip) and
+    w sign-flipped (compensates for cross-product handedness change)."""
+    from pinacotheca.prefab import PrefabPart, bake_to_obj
+
+    mesh = _FakeMesh(
+        m_Name="cube",
+        m_VertexCount=1,
+        m_Vertices=[(1.0, 2.0, 3.0)],
+        m_UV0=[(0.0, 0.0)],
+        m_Normals=[(0.0, 1.0, 0.0)],
+        m_SubMeshes=[],
+        triangles=[[(0, 0, 0)]],
+    )
+    mesh.m_Tangents = [(0.5, 0.0, 0.0, 1.0)]  # type: ignore[attr-defined]
+    parts = [
+        PrefabPart(mesh_obj=_MeshObj(mesh), world_matrix=np.eye(4, dtype=np.float64), materials=[])
+    ]
+    _patch_mesh_handler(monkeypatch)
+
+    obj = bake_to_obj(parts)
+
+    vtg_lines = [line for line in obj.split("\n") if line.startswith("vtg ")]
+    assert len(vtg_lines) == 1
+    toks = vtg_lines[0].split()
+    assert toks[0] == "vtg"
+    # X negated: 0.5 → -0.5
+    assert float(toks[1]) == -0.5
+    assert float(toks[2]) == 0.0
+    assert float(toks[3]) == 0.0
+    # w sign-flipped: 1.0 → -1.0
+    assert float(toks[4]) == -1.0
+
+
+def test_bake_to_obj_skips_vtg_without_tangents(monkeypatch: Any) -> None:
+    """When the mesh has no tangents, no `vtg` lines are emitted."""
+    from pinacotheca.prefab import PrefabPart, bake_to_obj
+
+    mesh = _FakeMesh(
+        m_Name="cube",
+        m_VertexCount=1,
+        m_Vertices=[(0.0, 0.0, 0.0)],
+        m_UV0=[(0.0, 0.0)],
+        m_Normals=[(0.0, 1.0, 0.0)],
+        m_SubMeshes=[],
+        triangles=[[(0, 0, 0)]],
+    )
+    # No m_Tangents on this mesh — _FakeHandler returns []
+    parts = [
+        PrefabPart(mesh_obj=_MeshObj(mesh), world_matrix=np.eye(4, dtype=np.float64), materials=[])
+    ]
+    _patch_mesh_handler(monkeypatch)
+
+    obj = bake_to_obj(parts)
+
+    assert "vtg " not in obj
+
+
 def _patch_mesh_handler(monkeypatch: Any) -> None:
     """Monkeypatch UnityPy's MeshHandler so bake_to_obj uses our fake meshes."""
 
@@ -155,6 +214,10 @@ def _patch_mesh_handler(monkeypatch: Any) -> None:
         @property
         def m_Normals(self) -> list[tuple[float, float, float]]:
             return self._m.m_Normals
+
+        @property
+        def m_Tangents(self) -> list[tuple[float, float, float, float]]:
+            return getattr(self._m, "m_Tangents", []) or []
 
         def get_triangles(self) -> list[list[tuple[int, int, int]]]:
             return self._m.triangles
