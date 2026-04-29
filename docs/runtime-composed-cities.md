@@ -4,7 +4,7 @@
 
 The 7 sparse capitals + every per-nation urban tile + Farm/Mine/Pasture/Camp/Grove + a couple of generic clutter prefabs (CITY_SITE, OUTPOST_RUINS) now render via `src/pinacotheca/clutter_transforms.py` as standard `IMPROVEMENT_3D_*.png` outputs.
 
-**Ground rendering for capitals + urban tiles is also done.** The 12 capitals + 10 urban tiles render with a TERRAIN_TEMPERATE biome base + per-nation `TerrainTexturePVTSplat` paint underneath the buildings. See the "Ground layer" section in `docs/extracting-3d-buildings.md` and the modules `src/pinacotheca/pvt_splats.py`, `biome_base.py`, `layered_render.py`. Heightmap displacement (`TerrainHeightSplat`) is still deferred.
+**Ground rendering for capitals + urban tiles + generic cities is also done.** The 12 capitals + 10 urban tiles + the two generic-city outputs (`IMPROVEMENT_3D_CITY` and `IMPROVEMENT_3D_CITY_SITE`, allowlisted via `GENERIC_LAYERED_Z_ICONS` in `extractor.py`) render with a TERRAIN_TEMPERATE biome base + their `TerrainTexturePVTSplat` paint underneath the buildings. See the "Ground layer" section in `docs/extracting-3d-buildings.md` and the modules `src/pinacotheca/pvt_splats.py`, `biome_base.py`, `layered_render.py`. Heightmap displacement (`TerrainHeightSplat`) is still deferred.
 
 What got built:
 

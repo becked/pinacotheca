@@ -135,12 +135,18 @@ The decompiled `TerrainTextureRenderer.cs:1591` (`RenderHeightSplats`) shows the
 
 Our isolated renders have no terrain to submerge into, so the ground stamp's Y becomes our cut line: anything below is what the in-game terrain would have hidden.
 
-## Ground layer: capitals + urban tiles
+## Ground layer: capitals + urban tiles + generic cities
 
 Capital and urban-tile renders go through a layered path that adds a hex
 ground tile + per-nation paint underneath the building geometry. The
 single-piece improvements above stay on the original transparent-bg
-path; only the 12 capitals + 10 urban tiles get the layered treatment.
+path; the 12 capitals + 10 urban tiles get the layered treatment, plus
+the two generic-city outputs `IMPROVEMENT_3D_CITY.png` and
+`IMPROVEMENT_3D_CITY_SITE.png` (allowlisted via
+`GENERIC_LAYERED_Z_ICONS` in `extractor.py` — both prefabs are sparse
+enough that the bare gaps between buildings/hovels need painted ground
+showing through, and per-ankh does not draw terrain under those tiles
+either).
 
 Three layers, composited bottom-up by `src/pinacotheca/layered_render.py`:
 

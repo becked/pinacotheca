@@ -588,6 +588,16 @@ PREFAB_DECODE_BLACKLIST: frozenset[str] = frozenset(
     }
 )
 
+# Generic improvements that should layer ground (TERRAIN_TEMPERATE biome hex
+# + their own PVT splat paint) underneath the buildings, like capitals + urban
+# tiles do. Both prefabs are sparse (compound walls with bare ground between
+# buildings, stockade ring with gaps between hovels), and per-ankh does not
+# draw terrain underneath these tiles either, so the painted ground has to
+# live in the PNG.
+GENERIC_LAYERED_Z_ICONS: frozenset[str] = frozenset(
+    {"IMPROVEMENT_CITY", "IMPROVEMENT_CITY_SITE"}
+)
+
 
 def _classify_immediate_children(
     root_go: Any,
@@ -881,7 +891,11 @@ def extract_improvement_meshes(
     # buildings, so the in-game per-nation paint (Egyptian sand roads, Greek
     # mosaic, etc.) shows through. Smaller improvements stay on the existing
     # transparent-bg path. See `src/pinacotheca/layered_render.py`.
-    layered_prefabs: set[str] = {c.prefab_name for c in capitals} | {u.prefab_name for u in urbans}
+    layered_prefabs: set[str] = (
+        {c.prefab_name for c in capitals}
+        | {u.prefab_name for u in urbans}
+        | {a.prefab_name for a in improvements if a.z_icon_name in GENERIC_LAYERED_Z_ICONS}
+    )
 
     if verbose:
         print("\n" + "=" * 60)
