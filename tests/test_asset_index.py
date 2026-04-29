@@ -11,10 +11,12 @@ from pathlib import Path
 
 from pinacotheca.asset_index import (
     ImprovementAsset,
+    UrbanRenderableImprovement,
     load_capital_assets,
     load_improvement_assets,
     load_resource_assets,
     load_urban_assets,
+    load_urban_renderable_improvements,
 )
 
 
@@ -975,3 +977,371 @@ def test_resource_broken_chain_skipped(tmp_path: Path) -> None:
     )
     [asset] = load_resource_assets(tmp_path)
     assert asset.z_type == "RESOURCE_OK"
+
+
+# ============================================================
+# load_urban_renderable_improvements
+# ============================================================
+
+
+def _write_urban_chain_basics(tmp_path: Path) -> None:
+    """Set up terrainTarget + assetVariation + asset for the canonical
+    Library/Pyramids/etc. test improvements used across the urban-renderable
+    cases below."""
+    # Minimal terrainTarget.xml: HABITABLE includes urban (Library, Theater,
+    # etc. resolve through this); DRY does not (Pyramids).
+    _write(
+        tmp_path / "terrainTarget.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>TERRAIN_TARGET_HABITABLE</zType>
+                <Terrains>
+                    <zValue>TERRAIN_URBAN</zValue>
+                    <zValue>TERRAIN_TEMPERATE</zValue>
+                </Terrains>
+            </Entry>
+            <Entry>
+                <zType>TERRAIN_TARGET_DRY</zType>
+                <Terrains>
+                    <zValue>TERRAIN_ARID</zValue>
+                    <zValue>TERRAIN_SAND</zValue>
+                </Terrains>
+            </Entry>
+            <Entry>
+                <zType>TERRAIN_TARGET_HILL</zType>
+                <Heights>
+                    <zValue>HEIGHT_HILL</zValue>
+                </Heights>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_IMPROVEMENT_LIBRARY_1</zType>
+                <SingleAsset>ASSET_IMPROVEMENT_LIBRARY_1</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_IMPROVEMENT_PYRAMIDS</zType>
+                <SingleAsset>ASSET_IMPROVEMENT_PYRAMIDS</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_IMPROVEMENT_SHRINE_ATHENA</zType>
+                <SingleAsset>ASSET_IMPROVEMENT_SHRINE_ATHENA</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_IMPROVEMENT_SHRINE_SERAPIS</zType>
+                <SingleAsset>ASSET_IMPROVEMENT_SHRINE_SERAPIS</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_IMPROVEMENT_SHRINE_OF_VICTORY</zType>
+                <SingleAsset>ASSET_IMPROVEMENT_SHRINE_OF_VICTORY</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_IMPROVEMENT_LIBRARY_1</zType>
+                <zAsset>Prefabs/Improvements/Library</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_IMPROVEMENT_PYRAMIDS</zType>
+                <zAsset>Prefabs/Improvements/Pyramids</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_IMPROVEMENT_SHRINE_ATHENA</zType>
+                <zAsset>Prefabs/Improvements/Shrine_Wisdom</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_IMPROVEMENT_SHRINE_SERAPIS</zType>
+                <zAsset>Prefabs/Improvements/Shrine_Sun</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_IMPROVEMENT_SHRINE_OF_VICTORY</zType>
+                <zAsset>Prefabs/Improvements/Shrine_Fire</zAsset>
+            </Entry>
+            """
+        ),
+    )
+
+
+def test_urban_renderable_includes_universal_improvement(tmp_path: Path) -> None:
+    """A bUrban=1 improvement with no nation/dynasty/terrain lock and no
+    scenario gate should be returned with nation_prereq=None."""
+    _write_urban_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_LIBRARY_1</zType>
+                <zIconName>IMPROVEMENT_LIBRARY</zIconName>
+                <bUrban>1</bUrban>
+                <AssetVariation>ASSET_VARIATION_IMPROVEMENT_LIBRARY_1</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    [imp] = load_urban_renderable_improvements(tmp_path)
+    assert imp == UrbanRenderableImprovement(
+        z_icon_name="IMPROVEMENT_LIBRARY",
+        z_type="IMPROVEMENT_LIBRARY_1",
+        prefab_name="Library",
+        nation_prereq=None,
+    )
+
+
+def test_urban_renderable_excludes_terrain_locked_wonder(tmp_path: Path) -> None:
+    """Pyramids has bUrban=1 but a `<TerrainValid>` block restricting it to
+    TERRAIN_TARGET_DRY only → can never land on TERRAIN_URBAN, must be
+    excluded from the urban-composite filter. The presence of the
+    `<TerrainValid>` element alone is sufficient (verified against XML:
+    no urban-renderable improvement has a `<TerrainValid>` element)."""
+    _write_urban_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_PYRAMIDS</zType>
+                <bUrban>1</bUrban>
+                <bWonder>1</bWonder>
+                <TerrainValid>
+                    <zValue>TERRAIN_TARGET_DRY</zValue>
+                </TerrainValid>
+                <AssetVariation>ASSET_VARIATION_IMPROVEMENT_PYRAMIDS</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    assert load_urban_renderable_improvements(tmp_path) == []
+
+
+def test_urban_renderable_includes_terrain_valid_with_urban_target(tmp_path: Path) -> None:
+    """Library has TerrainValid=HABITABLE → resolves to TERRAIN_URBAN
+    (among others) → urban-renderable. Verifies the terrainTarget.xml
+    resolution path."""
+    _write_urban_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_LIBRARY_1</zType>
+                <zIconName>IMPROVEMENT_LIBRARY</zIconName>
+                <bUrban>1</bUrban>
+                <TerrainValid>
+                    <zValue>TERRAIN_TARGET_HABITABLE</zValue>
+                </TerrainValid>
+                <AssetVariation>ASSET_VARIATION_IMPROVEMENT_LIBRARY_1</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    [imp] = load_urban_renderable_improvements(tmp_path)
+    assert imp.z_icon_name == "IMPROVEMENT_LIBRARY"
+
+
+def test_urban_renderable_captures_nation_prereq(tmp_path: Path) -> None:
+    """Nation-tied shrines carry their `<NationPrereq>` so the extractor
+    can render only on that nation's urban tile."""
+    _write_urban_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_SHRINE_ATHENA</zType>
+                <bUrban>1</bUrban>
+                <NationPrereq>NATION_GREECE</NationPrereq>
+                <AssetVariation>ASSET_VARIATION_IMPROVEMENT_SHRINE_ATHENA</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    [imp] = load_urban_renderable_improvements(tmp_path)
+    assert imp.nation_prereq == "NATION_GREECE"
+
+
+def test_urban_renderable_resolves_dynasty_to_nation(tmp_path: Path) -> None:
+    """Dynasty-locked improvements (Serapis under DYNASTY_PTOLEMY) get
+    mapped to a nation via the `_DYNASTY_TO_NATION` table."""
+    _write_urban_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_SHRINE_SERAPIS</zType>
+                <bUrban>1</bUrban>
+                <DynastyPrereq>DYNASTY_PTOLEMY</DynastyPrereq>
+                <AssetVariation>ASSET_VARIATION_IMPROVEMENT_SHRINE_SERAPIS</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    [imp] = load_urban_renderable_improvements(tmp_path)
+    assert imp.nation_prereq == "NATION_EGYPT"
+
+
+def test_urban_renderable_excludes_scenario_eventpack(tmp_path: Path) -> None:
+    """Scenario-only event content (`GameContentRequired=EVENTPACK_*`) is
+    excluded — covers the 3 cult shrines in `improvement-event-sap.xml`."""
+    _write_urban_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement-event-sap.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_SHRINE_OF_VICTORY</zType>
+                <bUrban>1</bUrban>
+                <GameContentRequired>EVENTPACK_RELIGION</GameContentRequired>
+                <AssetVariation>ASSET_VARIATION_IMPROVEMENT_SHRINE_OF_VICTORY</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    assert load_urban_renderable_improvements(tmp_path) == []
+
+
+def test_urban_renderable_excludes_non_urban_improvements(tmp_path: Path) -> None:
+    """Improvements without `<bUrban>1</bUrban>` (Farm, Mine, etc.) are
+    excluded outright."""
+    _write_urban_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_FARM</zType>
+                <AssetVariation>ASSET_VARIATION_IMPROVEMENT_LIBRARY_1</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    assert load_urban_renderable_improvements(tmp_path) == []
+
+
+def test_urban_renderable_keeps_shared_icon_per_nation(tmp_path: Path) -> None:
+    """Real-game case: Greek Zeus shrine and Babylonian Marduk shrine both
+    use IMPROVEMENT_SHRINE_KINGSHIP as their zIconName (one of 11 shared
+    art assets). They're DIFFERENT outputs because they appear on
+    different nations' urban tiles. Dedupe key is (icon, nation)."""
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_IMPROVEMENT_SHRINE_ZEUS</zType>
+                <SingleAsset>ASSET_IMPROVEMENT_SHRINE_KINGSHIP</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_IMPROVEMENT_SHRINE_MARDUK</zType>
+                <SingleAsset>ASSET_IMPROVEMENT_SHRINE_KINGSHIP</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_IMPROVEMENT_SHRINE_KINGSHIP</zType>
+                <zAsset>Prefabs/Improvements/KingshipShrine</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_SHRINE_ZEUS</zType>
+                <zIconName>IMPROVEMENT_SHRINE_KINGSHIP</zIconName>
+                <bUrban>1</bUrban>
+                <NationPrereq>NATION_GREECE</NationPrereq>
+                <AssetVariation>ASSET_VARIATION_IMPROVEMENT_SHRINE_ZEUS</AssetVariation>
+            </Entry>
+            <Entry>
+                <zType>IMPROVEMENT_SHRINE_MARDUK</zType>
+                <zIconName>IMPROVEMENT_SHRINE_KINGSHIP</zIconName>
+                <bUrban>1</bUrban>
+                <NationPrereq>NATION_BABYLONIA</NationPrereq>
+                <AssetVariation>ASSET_VARIATION_IMPROVEMENT_SHRINE_MARDUK</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    result = load_urban_renderable_improvements(tmp_path)
+    by_nation = {r.nation_prereq: r.z_type for r in result}
+    assert by_nation == {
+        "NATION_GREECE": "IMPROVEMENT_SHRINE_ZEUS",
+        "NATION_BABYLONIA": "IMPROVEMENT_SHRINE_MARDUK",
+    }
+
+
+def test_urban_renderable_dedupes_on_z_icon_name(tmp_path: Path) -> None:
+    """Tier collapse: Library_1 and Library_2 sharing zIconName=
+    IMPROVEMENT_LIBRARY should produce one entry (Library_1, first seen)."""
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_IMPROVEMENT_LIBRARY_1</zType>
+                <SingleAsset>ASSET_IMPROVEMENT_LIBRARY_1</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_IMPROVEMENT_LIBRARY_2</zType>
+                <SingleAsset>ASSET_IMPROVEMENT_LIBRARY_2</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_IMPROVEMENT_LIBRARY_1</zType>
+                <zAsset>Prefabs/Improvements/Library</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_IMPROVEMENT_LIBRARY_2</zType>
+                <zAsset>Prefabs/Improvements/Library_Tier2</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_LIBRARY_1</zType>
+                <zIconName>IMPROVEMENT_LIBRARY</zIconName>
+                <bUrban>1</bUrban>
+                <AssetVariation>ASSET_VARIATION_IMPROVEMENT_LIBRARY_1</AssetVariation>
+            </Entry>
+            <Entry>
+                <zType>IMPROVEMENT_LIBRARY_2</zType>
+                <zIconName>IMPROVEMENT_LIBRARY</zIconName>
+                <bUrban>1</bUrban>
+                <AssetVariation>ASSET_VARIATION_IMPROVEMENT_LIBRARY_2</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    [imp] = load_urban_renderable_improvements(tmp_path)
+    assert imp.z_type == "IMPROVEMENT_LIBRARY_1"
+    assert imp.prefab_name == "Library"

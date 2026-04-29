@@ -75,22 +75,30 @@ python scripts/bump-version.py 1.2.0
 
 ```
 src/pinacotheca/
-├── __init__.py       # Package exports
-├── categories.py     # Sprite categorization (regex patterns, pre-compiled)
-├── extractor.py      # UnityPy extraction (sprites, units, improvements)
-├── prefab.py         # GameObject/Transform walker, OBJ baker, splat/plinth filters
-├── renderer.py       # moderngl 3D mesh rendering with building/unit cameras
-├── atlas.py          # Texture atlas generation
-├── gallery.py        # HTML gallery generator (legacy)
-├── cli.py            # Command-line interface entry points
-└── py.typed          # PEP 561 marker for type hints
+├── __init__.py              # Package exports
+├── categories.py            # Sprite categorization (regex patterns, pre-compiled)
+├── extractor.py             # UnityPy extraction (sprites, units, improvements, urban composites)
+├── prefab.py                # GameObject/Transform walker, OBJ baker, splat/plinth filters
+├── renderer.py              # moderngl 3D mesh rendering with building/unit cameras
+├── atlas.py                 # Texture atlas generation
+├── asset_index.py           # XML chain parser (improvement → assetVariation → asset)
+├── biome_base.py            # TERRAIN_TEMPERATE biome base loader for layered renders
+├── clutter_transforms.py    # ClutterTransforms MonoBehaviour parser + expander
+├── clutter_culling.py       # RandomStruct + probabilistic clutter cull pass
+├── layered_render.py        # Biome + PVT + buildings layered orchestrator
+├── pvt_splats.py            # TerrainTexturePVTSplat parser + texture compositor
+├── terrain_clutter_splat.py # TerrainClutterSplat parser + per-channel mask compositor
+├── gallery.py               # HTML gallery generator (legacy)
+├── cli.py                   # Command-line interface entry points
+└── py.typed                 # PEP 561 marker for type hints
 
 docs/                 # Investigation writeups, feature requests, references
 ├── extracting-3d-buildings.md
 ├── extracting-game-assets-from-unity-with-python.md
 ├── atlas-reference.md
 ├── improvement-naming-alignment.md       # Canonical zIconName follow-up effort
-└── runtime-composed-cities.md            # ClutterTransforms parser for sparse capitals + urban tiles
+├── runtime-composed-cities.md            # ClutterTransforms parser for sparse capitals + urban tiles
+└── urban-improvement-composites.md       # Per-(improvement, nation) urban-tile composites with mask culling
 
 web/                  # SvelteKit gallery (primary web interface)
 ├── scripts/
@@ -114,13 +122,18 @@ decompiled/           # SYMLINK → decompiled C# assemblies — gitignored, loc
 
 - **`categories.py`**: Defines `CATEGORIES` dict mapping category names to regex patterns. Patterns are pre-compiled for performance. The `categorize()` function returns the category for a sprite name.
 
-- **`extractor.py`**: Three extraction entry points called in sequence by `pinacotheca`:
+- **`extractor.py`**: Four extraction entry points called in sequence by `pinacotheca`:
   - `extract_sprites()` — 2D sprite extraction (the original 4000+ icon set)
   - `extract_unit_meshes()` — 3D unit mesh renders (`UNIT_3D_*.png`)
   - `extract_improvement_meshes()` — 3D improvement renders (`IMPROVEMENT_3D_*.png` for improvements/capitals/urbans, `RESOURCE_3D_*.png` for resources). Discovers the asset list at runtime from the game's XML chain via `asset_index.py`. Includes a small `SUPPLEMENTAL_PREFABS` list for things not in `improvement.xml` (currently only the four pyramid construction stages) and `PREFAB_DECODE_BLACKLIST` for prefabs whose Texture2D decode SIGSEGVs UnityPy. Resources are tile-level decorations (animals, crops, ore deposits) the game composites independently of the improvement on top — the Pasture *fence* lives in the improvement prefab; the herd of horses/sheep/cattle on the tile under it lives in `Prefabs/Resource/<animal>`.
+  - `extract_urban_composite_meshes()` — per-(improvement, nation) urban-tile composites (`IMPROVEMENT_3D_<NAME>_<NATION>_URBAN.png`). Replicates the in-game runtime composition: improvement nestled inside the nation's urban tile with biome + PVT + clutter-culled background underneath. Filter via `load_urban_renderable_improvements()`; cull via `clutter_culling.cull_clutter_against_masks` matching the runtime `RandomStruct(0)` probabilistic rule. See `docs/urban-improvement-composites.md`.
   - Auto-detects game installation path on macOS and Windows.
 
-- **`asset_index.py`**: Pure-Python parser for the game's XML asset chain (`improvement.xml` → `assetVariation.xml` → `asset.xml`, plus DLC variants). `load_improvement_assets()` returns one `ImprovementAsset` per unique `zIconName` from improvement.xml; `load_capital_assets()` does the same for `ASSET_VARIATION_CITY_*_CAPITAL` entries; `load_urban_assets()` for per-nation `ASSET_<NATION>_URBAN`; `load_resource_assets()` walks `resource.xml` for tile resources (Horse, Sheep, Wheat, Iron, …). All four return the same `ImprovementAsset` shape so callers can use one render pipeline. No UnityPy dependency.
+- **`asset_index.py`**: Pure-Python parser for the game's XML asset chain (`improvement.xml` → `assetVariation.xml` → `asset.xml`, plus DLC variants). `load_improvement_assets()` returns one `ImprovementAsset` per unique `zIconName` from improvement.xml; `load_capital_assets()` does the same for `ASSET_VARIATION_CITY_*_CAPITAL` entries; `load_urban_assets()` for per-nation `ASSET_<NATION>_URBAN`; `load_resource_assets()` walks `resource.xml` for tile resources (Horse, Sheep, Wheat, Iron, …). All four return the same `ImprovementAsset` shape so callers can use one render pipeline. `load_urban_renderable_improvements()` filters to improvements eligible for urban-tile composite rendering (bUrban=1 + TerrainValid resolves to TERRAIN_URBAN + not scenario-gated), capturing `<NationPrereq>` (and `<DynastyPrereq>` mapped through a small table) — used by the urban-composite extractor. No UnityPy dependency.
+
+- **`terrain_clutter_splat.py`**: `TerrainClutterSplat` MonoBehaviour parser, prefab walker, and per-channel mask compositor (3-channel image: R=Trees, G=MinorBuildings, B=MajorBuildings, gated by the `clear*` flags). Same hand-parse + body-size-assert pattern as `pvt_splats.py`.
+
+- **`clutter_culling.py`**: `RandomStruct` port (Park-Miller LCG from `decompiled/Mohawk.SystemCore/RandomStruct.cs`) + `cull_clutter_against_masks(typed_parts, mask_planes, env)`. Replicates the runtime `ClutterTransformsBackgroundData.PopulateRenderData` cull rule: per instance, sample mask at world XZ for the instance's `TerrainClutterType` channel, drop if value > `RandomStruct(0).next_float()`. Used by the urban-composite extractor.
 
 - **`prefab.py`**: Unity GameObject/Transform tree walker. Key functions:
   - `walk_prefab(root_go)` — recurse the tree, collect MeshFilter leaves with baked world matrices
@@ -288,7 +301,9 @@ The 3D improvement renders are consumed by external tools that scan the filesyst
 - **per-ankh** (hex-based map renderer) — bakes our `IMPROVEMENT_3D_*.png` (and now `RESOURCE_3D_*.png`) outputs into atlases for its map view. Looks up improvements by `(tile.improvement, owner.family)` and resources by `tile.resource`, keyed on the game's canonical `zIconName`. Filenames match canonical zIconName directly.
 - **SvelteKit gallery** (`web/`) — `generate-manifest.ts` scans `extracted/sprites/` at build time and emits `manifest.json`. New PNGs auto-appear; no code changes needed.
 
-**API surface**: PNG filenames in `extracted/sprites/improvements/IMPROVEMENT_3D_<NAME>.png` and `extracted/sprites/resources/RESOURCE_3D_<NAME>.png`. Renames are breaking changes; coordinate with per-ankh before renaming. The naming-alignment doc proposes a future major version bump that aligns all names to canonical zIconName at once.
+**API surface**: PNG filenames in `extracted/sprites/improvements/IMPROVEMENT_3D_<NAME>.png`, `extracted/sprites/improvements/IMPROVEMENT_3D_<NAME>_<NATION>_URBAN.png` (urban-improvement composites — see "Urban-improvement composites" below), and `extracted/sprites/resources/RESOURCE_3D_<NAME>.png`. Renames are breaking changes; coordinate with per-ankh before renaming. The naming-alignment doc proposes a future major version bump that aligns all names to canonical zIconName at once.
+
+**Urban-improvement composites embed ground + the surrounding nation urban tile.** `IMPROVEMENT_3D_<NAME>_<NATION>_URBAN.png` outputs render the improvement nestled inside the nation's urban tile — biome (TEMPERATE) + per-nation PVT paint + culled urban clutter + the improvement on top, matching the in-game runtime composition (`ClutterTransformsBackgroundData.cs:158-162` probabilistic culling against the improvement's `TerrainClutterSplat` mask). Per-ankh consumers can look up `(tile.improvement, tile.urban_nation)` and prefer this composite over the standalone `IMPROVEMENT_3D_<NAME>.png` when both exist. Universal urban improvements (Library, Forum, Theater, etc.) are rendered on each of the 10 urban-tile nations; nation-locked improvements (52 shrines + Aksumite/Persian/Egyptian wonders) are rendered only on their own nation. ~750 PNGs total. See `docs/urban-improvement-composites.md` for the design.
 
 **Capital + urban + generic-city PNGs embed ground.** As of the layered-render work, `IMPROVEMENT_3D_<NATION>_CAPITAL.png` (12 nations), `IMPROVEMENT_3D_<NATION>_URBAN.png` (10 nations), and the two generic-city outputs `IMPROVEMENT_3D_CITY.png` and `IMPROVEMENT_3D_CITY_SITE.png` include a `TERRAIN_TEMPERATE` biome hex tile + their `TerrainTexturePVTSplat` paint underneath the buildings. The generic-city additions follow the same rule: per-ankh does not draw terrain under those tiles either, and both prefabs are sparse enough (compound walls with bare ground between buildings, stockade ring with gaps between hovels) that without painted ground showing through, the gaps stay empty. Per-ankh consumers must NOT double-render terrain underneath any of these — the hex ground is part of the icon. All other `IMPROVEMENT_3D_*.png` outputs (regular improvements, supplemental prefabs) and `RESOURCE_3D_*.png` outputs are unchanged: still transparent backgrounds. The set of layered prefabs is defined by `GENERIC_LAYERED_Z_ICONS` in `extractor.py` plus all capitals/urbans from the XML chain. See `docs/extracting-3d-buildings.md` (Ground layer section) and `src/pinacotheca/layered_render.py` for the design.
 

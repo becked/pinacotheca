@@ -1431,3 +1431,279 @@ def _is_lower_lod_part(part: Any) -> bool:
     except Exception:
         return False
     return bool(re.search(r"_LOD[12]$", name, flags=re.IGNORECASE))
+
+
+def extract_urban_composite_meshes(
+    *,
+    game_data: Path | None = None,
+    output_dir: Path | None = None,
+    verbose: bool = True,
+) -> dict[str, int]:
+    """Render per-nation urban-tile composites: each urban-buildable
+    improvement nestled inside each compatible nation's urban tile
+    (biome + PVT + clutter-culled background + improvement on top),
+    matching the in-game runtime composition.
+
+    For each urban-renderable improvement (per
+    `load_urban_renderable_improvements`):
+      - Universal improvements render on each of 10 urban-tile nations.
+      - Nation-locked improvements (shrines, national wonders) render
+        only on their `<NationPrereq>` (or `<DynastyPrereq>`-resolved)
+        nation's urban tile.
+
+    Pipeline per (improvement, nation):
+      1. Walk the improvement prefab → MeshFilter parts + clutter
+         expansion + `TerrainClutterSplat` mask planes.
+      2. Apply probabilistic culling to the cached urban-tile clutter
+         using the improvement's mask planes (matches
+         `ClutterTransformsBackgroundData.cs:158-162`).
+      3. Build the layered composite — biome base + urban PVT planes
+         + (urban mesh parts + culled urban clutter + improvement parts).
+      4. Save to `IMPROVEMENT_3D_<NAME>_<NATION>_URBAN.png`.
+
+    Returns `{"rendered": int, "skipped": int, "errors": int}`. See
+    `docs/urban-improvement-composites.md` for the design.
+    """
+    try:
+        import UnityPy
+    except ImportError as e:
+        if verbose:
+            print(f"WARNING: 3D rendering not available ({e})", file=sys.stderr)
+        return {"rendered": 0, "skipped": 0, "errors": 0}
+
+    from pinacotheca.asset_index import (
+        UrbanRenderableImprovement,
+        load_urban_assets,
+        load_urban_renderable_improvements,
+    )
+    from pinacotheca.biome_base import load_biome_base
+    from pinacotheca.clutter_culling import cull_clutter_against_masks
+    from pinacotheca.clutter_transforms import (
+        clutter_to_prefab_parts_with_type,
+        find_clutter_transforms_in_prefab,
+    )
+    from pinacotheca.layered_render import render_layered_ground
+    from pinacotheca.prefab import (
+        drop_splat_meshes,
+        find_root_gameobject,
+        walk_prefab,
+    )
+    from pinacotheca.pvt_splats import find_pvt_splats_in_prefab
+    from pinacotheca.terrain_clutter_splat import find_terrain_clutter_splats_in_prefab
+
+    if game_data is None:
+        game_data = find_game_data()
+    if game_data is None or not game_data.exists():
+        raise FileNotFoundError("Could not find Old World game data!")
+    if output_dir is None:
+        output_dir = Path.cwd() / "extracted"
+
+    improvements_dir = output_dir / "sprites" / "improvements"
+    improvements_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve XML chain root (same walk-up as extract_improvement_meshes).
+    xml_dir: Path | None = None
+    for ancestor in [game_data, *game_data.parents]:
+        candidate = ancestor / "Reference" / "XML" / "Infos"
+        if candidate.is_dir():
+            xml_dir = candidate
+            break
+    if xml_dir is None:
+        raise FileNotFoundError(f"Could not locate Reference/XML/Infos starting from {game_data}")
+
+    improvements = load_urban_renderable_improvements(xml_dir)
+    urban_tiles = load_urban_assets(xml_dir)
+
+    # Map nation key → urban tile prefab name. urban_tile.z_icon_name is
+    # `GREECE_URBAN` (the canonical from `load_urban_assets`); we want
+    # `NATION_GREECE` to match what `load_urban_renderable_improvements`
+    # captures as `nation_prereq`.
+    nation_to_urban_prefab: dict[str, str] = {}
+    for ut in urban_tiles:
+        nation = ut.z_icon_name.removesuffix("_URBAN")
+        nation_to_urban_prefab[f"NATION_{nation}"] = ut.prefab_name
+
+    universal = [i for i in improvements if i.nation_prereq is None]
+    nation_locked = [i for i in improvements if i.nation_prereq is not None]
+    nation_locked_renderable = [
+        i for i in nation_locked if i.nation_prereq in nation_to_urban_prefab
+    ]
+    expected = len(universal) * len(nation_to_urban_prefab) + len(nation_locked_renderable)
+
+    if verbose:
+        print("\n" + "=" * 60)
+        print("3D Urban-Improvement Composite Extraction")
+        print("=" * 60)
+        print(
+            f"Discovered {len(improvements)} urban-renderable improvements "
+            f"({len(universal)} universal + {len(nation_locked)} nation-locked)"
+        )
+        print(
+            f"Urban tiles available for {len(nation_to_urban_prefab)} nations: "
+            f"{sorted(n.removeprefix('NATION_') for n in nation_to_urban_prefab)}"
+        )
+        skipped_nation = len(nation_locked) - len(nation_locked_renderable)
+        if skipped_nation:
+            print(
+                f"  Skipping {skipped_nation} nation-locked improvements with no urban tile "
+                f"(Kush/Yuezhi/Tamil etc.)"
+            )
+        print(f"Expected output count: {expected}")
+
+    original_cwd = os.getcwd()
+    os.chdir(str(game_data))
+
+    rendered = 0
+    skipped_exists = 0
+    skipped_no_prefab = 0
+    skipped_no_mesh = 0
+    errors = 0
+
+    try:
+        if verbose:
+            print("Loading Unity assets...")
+        env = UnityPy.Environment()
+        env.load_file(str(game_data / "globalgamemanagers.assets"))
+        env.load_file(str(game_data / "resources.assets"))
+
+        biome_base = load_biome_base(env, xml_dir)
+
+        # Cache per-nation urban-tile geometry so we walk each prefab once
+        # rather than per-improvement.
+        urban_cache: dict[str, dict[str, Any]] = {}
+        for nation_key, urban_prefab_name in nation_to_urban_prefab.items():
+            root = find_root_gameobject(env, urban_prefab_name)
+            if root is None:
+                if verbose:
+                    print(f"  [WARN] Urban prefab not found for {nation_key}: {urban_prefab_name!r}")
+                continue
+            mesh_parts = drop_splat_meshes(
+                [p for p in walk_prefab(root) if not _is_lower_lod_part(p)]
+            )
+            typed_clutter: list[tuple[Any, int]] = []
+            for parsed_ct, parent_world in find_clutter_transforms_in_prefab(root):
+                try:
+                    typed_clutter.extend(
+                        clutter_to_prefab_parts_with_type(env, parsed_ct, parent_world)
+                    )
+                except NotImplementedError as e:
+                    if verbose:
+                        print(f"    [WARN] {nation_key} clutter unsupported: {e}")
+                    continue
+            pvt_planes = find_pvt_splats_in_prefab(root)
+            urban_cache[nation_key] = {
+                "mesh_parts": mesh_parts,
+                "typed_clutter": typed_clutter,
+                "pvt_planes": pvt_planes,
+            }
+            if verbose:
+                print(
+                    f"  Cached {nation_key}: {len(mesh_parts)} mesh + "
+                    f"{len(typed_clutter)} clutter + {len(pvt_planes)} PVT planes"
+                )
+
+        # Build the (improvement, nation) job list.
+        jobs: list[tuple[UrbanRenderableImprovement, str]] = []
+        for imp in improvements:
+            if imp.nation_prereq is not None:
+                if imp.nation_prereq in urban_cache:
+                    jobs.append((imp, imp.nation_prereq))
+            else:
+                for nation_key in urban_cache:
+                    jobs.append((imp, nation_key))
+
+        if verbose:
+            print(f"\nRendering {len(jobs)} composite jobs...")
+
+        for imp, nation_key in jobs:
+            name = imp.z_icon_name.removeprefix("IMPROVEMENT_")
+            nation = nation_key.removeprefix("NATION_")
+            out_path = improvements_dir / f"IMPROVEMENT_3D_{name}_{nation}_URBAN.png"
+
+            if out_path.exists():
+                skipped_exists += 1
+                continue
+
+            imp_root = find_root_gameobject(env, imp.prefab_name)
+            if imp_root is None:
+                if verbose:
+                    print(
+                        f"  [SKIP] {out_path.name}: improvement prefab "
+                        f"{imp.prefab_name!r} not found"
+                    )
+                skipped_no_prefab += 1
+                continue
+
+            imp_mesh_parts = drop_splat_meshes(
+                [p for p in walk_prefab(imp_root) if not _is_lower_lod_part(p)]
+            )
+            imp_clutter_parts: list[Any] = []
+            for parsed_ct, parent_world in find_clutter_transforms_in_prefab(imp_root):
+                try:
+                    typed = clutter_to_prefab_parts_with_type(env, parsed_ct, parent_world)
+                except NotImplementedError:
+                    continue
+                imp_clutter_parts.extend(p for p, _ in typed)
+
+            imp_combined = imp_mesh_parts + imp_clutter_parts
+            if not imp_combined:
+                if verbose:
+                    print(f"  [SKIP] {out_path.name}: improvement has no usable mesh parts")
+                skipped_no_mesh += 1
+                continue
+
+            mask_planes = find_terrain_clutter_splats_in_prefab(imp_root)
+
+            cache = urban_cache[nation_key]
+            culled_urban_clutter = cull_clutter_against_masks(
+                cache["typed_clutter"], mask_planes, env
+            )
+
+            # Urban tile parts and the improvement live in separate
+            # material domains. Render each as its own building layer so
+            # `find_diffuse_for_prefab` resolves per-domain — combining
+            # them mis-applies one domain's texture to the other's UVs.
+            urban_buildings = cache["mesh_parts"] + culled_urban_clutter
+
+            try:
+                img = render_layered_ground(
+                    urban_buildings,
+                    cache["pvt_planes"],
+                    biome_base,
+                    env,
+                    extra_building_parts=imp_combined,
+                )
+                img.save(out_path, optimize=False)
+                rendered += 1
+                if verbose:
+                    n_culled = len(cache["typed_clutter"]) - len(culled_urban_clutter)
+                    print(
+                        f"  [OK] {out_path.name} "
+                        f"(imp={len(imp_combined)} parts, masks={len(mask_planes)}, "
+                        f"culled={n_culled}/{len(cache['typed_clutter'])})"
+                    )
+                del img
+                gc.collect()
+            except Exception as e:
+                if verbose:
+                    print(f"  [ERROR] {out_path.name}: {e}")
+                errors += 1
+
+        if verbose:
+            print("\n" + "=" * 60)
+            print("URBAN-COMPOSITE EXTRACTION COMPLETE")
+            print("=" * 60)
+            print(f"Rendered: {rendered}")
+            print(f"Skipped (exists): {skipped_exists}")
+            print(f"Skipped (no prefab): {skipped_no_prefab}")
+            print(f"Skipped (no mesh): {skipped_no_mesh}")
+            print(f"Errors: {errors}")
+
+        return {
+            "rendered": rendered,
+            "skipped": skipped_exists + skipped_no_prefab + skipped_no_mesh,
+            "errors": errors,
+        }
+
+    finally:
+        os.chdir(original_cwd)

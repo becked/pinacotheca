@@ -19,6 +19,7 @@ with the same padding the single-pass path uses.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -87,8 +88,11 @@ def render_layered_ground(
     height: int = 2048,
     padding: int = 32,
     pre_rotation_y_deg: float = 180.0,
+    extra_building_parts: list[PrefabPart] | None = None,
 ) -> Image.Image:
-    """Render the three-layer composite for a capital or urban prefab.
+    """Render the three-layer composite for a capital or urban prefab,
+    optionally with an extra building layer for urban-improvement
+    composites.
 
     Args:
         building_parts: existing combined parts (after drop_splat_meshes
@@ -105,6 +109,13 @@ def render_layered_ground(
         pre_rotation_y_deg: forwarded to every `bake_to_obj` call. Default
             180° matches the buildings convention so all three layers face
             the same way.
+        extra_building_parts: optional second buildings group rendered as
+            its own layer on top of `building_parts`. Required when the
+            two groups come from different material domains (e.g. an
+            urban tile's clutter + an improvement's mesh) — baking them
+            together would force `find_diffuse_for_prefab` to pick a
+            single texture across both, mis-applying it to one group's
+            UVs and producing garbled output.
 
     Returns:
         PIL RGBA image, autocropped with `padding`.
@@ -130,19 +141,32 @@ def render_layered_ground(
         plane_obj = bake_to_obj([_plane_to_part(plane)], pre_rotation_y_deg=pre_rotation_y_deg)
         nation_planes_with_texture.append((plane, plane_obj, tex))
 
-    buildings_obj: str | None = None
-    buildings_tex: Image.Image | None = None
-    buildings_packed_pbr: Image.Image | None = None
-    buildings_normal_map: Image.Image | None = None
-    if building_parts:
-        raw_buildings_obj = bake_to_obj(building_parts, pre_rotation_y_deg=pre_rotation_y_deg)
-        cut_y = find_ground_y(building_parts)
-        buildings_obj = strip_plinth_from_obj(raw_buildings_obj, cut_y_override=cut_y)
-        buildings_tex = find_diffuse_for_prefab(building_parts)
-        buildings_packed_pbr = find_packed_pbr_for_prefab(building_parts)
-        buildings_normal_map = find_normal_map_for_prefab(building_parts)
-        if buildings_tex is None:
-            logger.warning("Buildings have no resolvable diffuse texture; rendering biome+PVT only")
+    @dataclass(frozen=True)
+    class _BakedBuildings:
+        obj: str
+        tex: Image.Image
+        packed_pbr: Image.Image | None
+        normal_map: Image.Image | None
+
+    def _bake_group(parts: list[PrefabPart], label: str) -> _BakedBuildings | None:
+        if not parts:
+            return None
+        raw = bake_to_obj(parts, pre_rotation_y_deg=pre_rotation_y_deg)
+        cut_y = find_ground_y(parts)
+        obj = strip_plinth_from_obj(raw, cut_y_override=cut_y)
+        tex = find_diffuse_for_prefab(parts)
+        if tex is None:
+            logger.warning("%s have no resolvable diffuse texture; skipping layer", label)
+            return None
+        return _BakedBuildings(
+            obj=obj,
+            tex=tex,
+            packed_pbr=find_packed_pbr_for_prefab(parts),
+            normal_map=find_normal_map_for_prefab(parts),
+        )
+
+    primary_buildings = _bake_group(building_parts, "Primary buildings")
+    extra_buildings = _bake_group(extra_building_parts or [], "Extra buildings")
 
     # --- Compute target XZ footprint = union of (buildings, nation PVT).
     target_bboxes: list[tuple[NDArray[np.float64], NDArray[np.float64]]] = []
@@ -150,8 +174,10 @@ def render_layered_ground(
         bb = _bbox_of_obj(plane_obj)
         if bb is not None:
             target_bboxes.append(bb)
-    if buildings_obj is not None:
-        bb = _bbox_of_obj(buildings_obj)
+    for baked in (primary_buildings, extra_buildings):
+        if baked is None:
+            continue
+        bb = _bbox_of_obj(baked.obj)
         if bb is not None:
             target_bboxes.append(bb)
 
@@ -239,17 +265,19 @@ def render_layered_ground(
         )
         _stack(nation_layer)
 
-    if buildings_obj is not None and buildings_tex is not None:
+    for baked in (primary_buildings, extra_buildings):
+        if baked is None:
+            continue
         building_layer = render_mesh_to_image(
-            buildings_obj,
-            buildings_tex,
+            baked.obj,
+            baked.tex,
             width=width,
             height=height,
             autocrop=False,
             force_upright=True,
             bbox_override=shared_bbox,
-            packed_pbr_image=buildings_packed_pbr,
-            normal_map_image=buildings_normal_map,
+            packed_pbr_image=baked.packed_pbr,
+            normal_map_image=baked.normal_map,
         )
         _stack(building_layer)
 

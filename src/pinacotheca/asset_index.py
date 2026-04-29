@@ -37,6 +37,27 @@ IMPROVEMENT_FILES: tuple[str, ...] = (
     "improvement.xml",
     "improvement-event.xml",
 )
+# Used by `load_urban_renderable_improvements` only — adds the SAP event
+# pack, which holds scenario shrines that we filter OUT via the
+# `GameContentRequired=EVENTPACK_*` gate. Reading the file lets us see
+# (and explicitly exclude) those entries.
+URBAN_IMPROVEMENT_FILES: tuple[str, ...] = (
+    "improvement.xml",
+    "improvement-event.xml",
+    "improvement-event-sap.xml",
+)
+
+TERRAIN_TARGET_FILES: tuple[str, ...] = ("terrainTarget.xml",)
+TERRAIN_URBAN = "TERRAIN_URBAN"
+
+# DynastyPrereq → NationPrereq fallback. Old World ships dynasty-locked
+# improvements (so far just Serapis under DYNASTY_PTOLEMY = Ptolemaic
+# Egypt). Each entry here translates into "this dynasty's improvement
+# renders only on that nation's urban tile". Extend if new dynasty-locked
+# urban improvements appear in DLC.
+_DYNASTY_TO_NATION: dict[str, str] = {
+    "DYNASTY_PTOLEMY": "NATION_EGYPT",
+}
 RESOURCE_FILES: tuple[str, ...] = (
     "resource.xml",
     "resource-btt.xml",
@@ -418,6 +439,197 @@ def load_capital_assets(xml_dir: Path) -> list[ImprovementAsset]:
                 weight=best_weight,
             )
         )
+    return out
+
+
+@dataclass(frozen=True)
+class UrbanRenderableImprovement:
+    """One urban-buildable improvement, paired with its nation lock if any.
+
+    `nation_prereq` is `None` for universal improvements (Library, Forum,
+    Bath, Theater, etc. — buildable in any nation's city). When set, the
+    improvement only renders on that one nation's urban tile (shrines
+    pinned via `<NationPrereq>`, dynasty-pinned wonders via the
+    `_DYNASTY_TO_NATION` fallback).
+    """
+
+    z_icon_name: str  # canonical name; used in output filename
+    z_type: str  # the actual XML entry (for diagnostics)
+    prefab_name: str  # last segment of zAsset path; pass to find_root_gameobject
+    nation_prereq: str | None
+
+
+def _load_urban_compatible_terrain_targets(xml_dir: Path) -> frozenset[str]:
+    """Resolve `terrainTarget.xml` to the set of `TERRAIN_TARGET_*` values
+    whose `<Terrains>` list includes `TERRAIN_URBAN`.
+
+    Improvements declare valid terrain via `<TerrainValid><zValue>TARGET</zValue>
+    ...</TerrainValid>` where each TARGET resolves through `terrainTarget.xml`
+    to a list of concrete `TERRAIN_*` values. An improvement renders inside
+    the urban-tile composite if ANY of its targets includes `TERRAIN_URBAN`
+    (or it has no `<TerrainValid>` at all — e.g. Hanging Gardens, accepted
+    everywhere except `<TerrainInvalid>`).
+
+    Examples (from the actual XML):
+      - TERRAIN_TARGET_DRY     → {ARID, SAND}                — no urban
+      - TERRAIN_TARGET_HILL    → height-based                 — no urban
+      - TERRAIN_TARGET_HABITABLE → {URBAN, ARID, TEMPERATE, LUSH} — yes
+      - TERRAIN_TARGET_URBAN   → {URBAN}                       — yes
+    """
+    out: set[str] = set()
+    for entry in _load_entries(xml_dir, TERRAIN_TARGET_FILES):
+        z_type = _entry_text(entry, "zType")
+        if not z_type:
+            continue
+        terrains = entry.find("Terrains")
+        if terrains is None:
+            continue
+        for child in terrains.findall("zValue"):
+            if child.text and child.text.strip() == TERRAIN_URBAN:
+                out.add(z_type)
+                break
+    return frozenset(out)
+
+
+def _is_urban_renderable(
+    entry: ET.Element,
+    urban_compatible_targets: frozenset[str],
+) -> bool:
+    """Decide if an improvement entry should produce urban-tile composite
+    renders. Filter rules (verified via the wonder + shrine investigation):
+
+    - Must have `<bUrban>1</bUrban>` (the canonical urban-eligibility flag).
+    - If `<TerrainValid>` is present, at least one of its `<zValue>` targets
+      must resolve to a terrain list containing `TERRAIN_URBAN` — otherwise
+      the improvement is locked to non-urban terrain (Pyramids on DRY,
+      Acropolis on HILL, etc.). No `<TerrainValid>` at all means accepted
+      anywhere, including urban (Hanging Gardens behavior).
+    - Must NOT be gated by `<GameContentRequired>EVENTPACK_*</...>`
+      (scenario-only event content; per the user, we don't ship those).
+
+    Other DLC gates (`EMPIRES_OF_THE_INDUS`, `WONDERS_DYNASTIES`, etc.)
+    pass through — those are real-game additions, not scenarios.
+    """
+    if _entry_text(entry, "bUrban") != "1":
+        return False
+    tv = entry.find("TerrainValid")
+    if tv is not None:
+        targets = [c.text.strip() for c in tv.findall("zValue") if c.text and c.text.strip()]
+        if targets and not any(t in urban_compatible_targets for t in targets):
+            return False
+    gate = _entry_text(entry, "GameContentRequired")
+    if gate is not None and gate.startswith("EVENTPACK_"):
+        return False
+    return True
+
+
+def _resolve_nation_lock(entry: ET.Element) -> str | None:
+    """Extract the nation lock for an urban-renderable improvement.
+
+    Priority: explicit `<NationPrereq>` first; then `<DynastyPrereq>` mapped
+    via `_DYNASTY_TO_NATION`. Returns `None` for universal improvements
+    (no lock — render on every urban tile).
+    """
+    nation = _entry_text(entry, "NationPrereq")
+    if nation:
+        return nation
+    dynasty = _entry_text(entry, "DynastyPrereq")
+    if dynasty:
+        mapped = _DYNASTY_TO_NATION.get(dynasty)
+        if mapped is not None:
+            return mapped
+        logger.debug(
+            "Improvement with DynastyPrereq=%s has no _DYNASTY_TO_NATION mapping; "
+            "treating as universal",
+            dynasty,
+        )
+    return None
+
+
+def load_urban_renderable_improvements(xml_dir: Path) -> list[UrbanRenderableImprovement]:
+    """Discover every improvement that should render inside an urban-tile
+    composite, paired with its nation lock if any.
+
+    Walks `URBAN_IMPROVEMENT_FILES`, applies `_is_urban_renderable`, captures
+    `<NationPrereq>`/`<DynastyPrereq>`, and resolves the prefab name through
+    the same `assetVariation.xml → asset.xml` chain used by
+    `load_improvement_assets`. Dedupes on `z_icon_name` (first wins —
+    matches the existing tier-collapsing behavior, so Library_1 is rendered
+    in place of Library_2/3 on the urban composite).
+
+    Returns an empty list if `xml_dir` doesn't exist.
+    """
+    if not xml_dir.exists():
+        logger.warning("XML directory not found: %s", xml_dir)
+        return []
+
+    improvement_xml = _load_entries(xml_dir, URBAN_IMPROVEMENT_FILES)
+    variations = _build_variation_index(_load_entries(xml_dir, ASSET_VARIATION_FILES))
+    assets = _build_asset_index(_load_entries(xml_dir, ASSET_FILES))
+    urban_compatible_targets = _load_urban_compatible_terrain_targets(xml_dir)
+
+    # Dedupe key is (z_icon_name, nation_prereq):
+    #   - Universal improvements (nation_prereq=None): collapses upgrade
+    #     tiers (Library_1/2/3 share zIconName=IMPROVEMENT_LIBRARY → one
+    #     entry, basic-tier first wins).
+    #   - Nation-locked shrines: 11 shared art assets across nations means
+    #     several shrines share a zIconName (Greek Zeus + Babylonian
+    #     Marduk both use IMPROVEMENT_SHRINE_KINGSHIP), but they're
+    #     distinct PNGs because they appear on different urban tiles.
+    #     Including nation_prereq in the key keeps them separate.
+    seen: set[tuple[str, str | None]] = set()
+    out: list[UrbanRenderableImprovement] = []
+    skipped_filter = 0
+    skipped_no_chain = 0
+    skipped_dup = 0
+
+    for entry in improvement_xml:
+        z_type = _entry_text(entry, "zType")
+        if not z_type:
+            continue
+        if not _is_urban_renderable(entry, urban_compatible_targets):
+            skipped_filter += 1
+            continue
+        z_icon_name = _entry_text(entry, "zIconName") or z_type
+        nation_prereq = _resolve_nation_lock(entry)
+        key = (z_icon_name, nation_prereq)
+        if key in seen:
+            skipped_dup += 1
+            continue
+        asset_var = _entry_text(entry, "AssetVariation")
+        if not asset_var:
+            skipped_no_chain += 1
+            continue
+        variation = variations.get(asset_var)
+        if variation is None:
+            skipped_no_chain += 1
+            continue
+        best_asset_z, _w = max(variation.candidates, key=lambda c: c[1])
+        prefab = assets.get(best_asset_z)
+        if not prefab:
+            skipped_no_chain += 1
+            continue
+        seen.add(key)
+        out.append(
+            UrbanRenderableImprovement(
+                z_icon_name=z_icon_name,
+                z_type=z_type,
+                prefab_name=prefab,
+                nation_prereq=nation_prereq,
+            )
+        )
+
+    if skipped_filter or skipped_no_chain or skipped_dup:
+        logger.info(
+            "load_urban_renderable_improvements: %d resolved, "
+            "%d filtered (non-urban / scenario / terrain-locked), "
+            "%d no chain, %d duplicate icon",
+            len(out),
+            skipped_filter,
+            skipped_no_chain,
+            skipped_dup,
+        )
+
     return out
 
 

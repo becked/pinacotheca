@@ -505,13 +505,39 @@ def clutter_to_prefab_parts(
     Material selection mirrors `Regenerate` (line 275): overrideMaterial wins
     when set, otherwise the per-model material.
     """
+    typed = clutter_to_prefab_parts_with_type(env, parsed, parent_world)
+    return [part for part, _ in typed]
+
+
+# TerrainClutterType enum (decompiled/Assembly-CSharp/TerrainClutterType.cs):
+#   None = -1, Trees = 0, MinorBuildings = 1, MajorBuildings = 2
+TERRAIN_CLUTTER_TYPE_NONE = -1
+
+
+def clutter_to_prefab_parts_with_type(
+    env: Any,
+    parsed: ParsedClutterTransforms,
+    parent_world: NDArray[np.float64],
+) -> list[tuple[PrefabPart, int]]:
+    """Same expansion as `clutter_to_prefab_parts`, but each part is paired
+    with its resolved `TerrainClutterType` (int). Resolution rule mirrors
+    `ClutterTransformsBackgroundData.AddModel:90-93`:
+
+        if model.clutter_override != TerrainClutterType.None:
+            type = model.clutter_override
+        else:
+            type = parent.clutter_type
+
+    The cull pass in `clutter_culling.py` reads the per-instance type to
+    decide which mask channel to sample.
+    """
     if parsed.use_world_tiling:
         raise NotImplementedError(
             "ClutterTransforms.useWorldTiling=True is not yet supported. "
             "If a target uses tiling, decide whether to honor or skip per instance."
         )
 
-    parts: list[PrefabPart] = []
+    out: list[tuple[PrefabPart, int]] = []
     for model in parsed.models:
         if not model.show:
             continue
@@ -532,14 +558,18 @@ def clutter_to_prefab_parts(
         if mat_reader is not None and mat_reader.type.name == "Material":
             materials.append(ObjectReaderAsPPtr(mat_reader))
 
+        if model.clutter_override != TERRAIN_CLUTTER_TYPE_NONE:
+            resolved_type = model.clutter_override
+        else:
+            resolved_type = parsed.clutter_type
+
         mesh_obj = ObjectReaderAsPPtr(mesh_reader)
         for inst in model.instances:
             world = parent_world @ trs_from_instance(inst)
-            parts.append(
-                PrefabPart(
-                    mesh_obj=mesh_obj,
-                    world_matrix=world,
-                    materials=materials,
-                )
+            part = PrefabPart(
+                mesh_obj=mesh_obj,
+                world_matrix=world,
+                materials=materials,
             )
-    return parts
+            out.append((part, resolved_type))
+    return out
