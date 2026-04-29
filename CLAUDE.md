@@ -6,6 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Pinacotheca is a Python tool for extracting and cataloging sprite assets from the game **Old World** (a 4X strategy game by Mohawk Games). It uses UnityPy to extract sprites directly from Unity asset bundles without requiring external tools like AssetRipper.
 
+## Reference Materials (local-only symlinks)
+
+Two symlinks at the repo root point to authoritative sources outside the project. Both are gitignored — they exist on the maintainer's machine and on Claude's. Read them freely; never copy their contents into the repo.
+
+- **`reference/`** → game install's `Old World/Reference/` directory. Contains the shipped XML data (`XML/Infos`, `XML/Mods`, `XML/UI`), modding source (`Source/Base`, `Source/Mods`), and reference graphics. **Use this** as the source of truth for anything we parse out of the XML chain (improvement.xml, asset.xml, assetVariation.xml, resource.xml, DLC variants), for verifying field names, for sanity-checking enum values, and for finding new improvements/resources/units before they show up in extraction.
+
+- **`decompiled/`** → decompiled C# of the game's assemblies (`Assembly-CSharp/`, `Mohawk.SystemCore/`, `TenCrowns.CarthageCampaign/`, `TenCrowns.GameCore/`). **Use this** as the source of truth for runtime behavior we have to mimic — camera setup, lighting, shader parameters, the `ClutterTransforms` MonoBehaviour layout, splat/PVT pipelines, mesh baking, anything where the XML data alone doesn't tell you how the game actually composes the visual. Most of the camera/rendering work in `renderer.py`, `layered_render.py`, and `clutter_transforms.py` was reverse-engineered from here.
+
+When investigating anything visual or runtime-composed (new prefab type breaks, layout drift after a patch, "how does the game actually render X"), check `decompiled/` *before* guessing from extracted bytes. When investigating anything data-driven (new improvement/resource/unit, naming conventions, DLC additions), check `reference/XML/` and `reference/Source/`.
+
 ## Commands
 
 ```bash
@@ -95,6 +105,9 @@ web/                  # SvelteKit gallery (primary web interface)
 │   └── data/
 │       └── manifest.json     # Generated sprite metadata
 └── svelte.config.js          # Outputs to ../extracted/
+
+reference/            # SYMLINK → game install Reference/ (XML, Source, Graphics) — gitignored
+decompiled/           # SYMLINK → decompiled C# assemblies — gitignored, local-only
 ```
 
 ### Key Modules
