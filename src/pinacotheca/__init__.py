@@ -15,10 +15,13 @@ __all__ = [
     "categorize",
     "CATEGORIES",
     "render_mesh_to_image",
+    "RenderMetadata",
+    "write_sidecar",
 ]
 
 from pinacotheca.atlas import generate_atlases
 from pinacotheca.categories import CATEGORIES, categorize
 from pinacotheca.extractor import extract_sprites, extract_unit_meshes
 from pinacotheca.gallery import generate_gallery
+from pinacotheca.render_metadata import RenderMetadata, write_sidecar
 from pinacotheca.renderer import render_mesh_to_image

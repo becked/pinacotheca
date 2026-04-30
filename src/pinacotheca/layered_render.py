@@ -37,6 +37,12 @@ from pinacotheca.prefab import (
     strip_plinth_from_obj,
 )
 from pinacotheca.pvt_splats import PvtPlanePart, compose_pvt_texture
+from pinacotheca.render_metadata import (
+    SCHEMA_VERSION,
+    RenderInfo,
+    RenderMetadata,
+    WorldBounds,
+)
 from pinacotheca.renderer import (
     autocrop_with_padding,
     parse_obj,
@@ -89,7 +95,7 @@ def render_layered_ground(
     padding: int = 32,
     pre_rotation_y_deg: float = 180.0,
     extra_building_parts: list[PrefabPart] | None = None,
-) -> Image.Image:
+) -> tuple[Image.Image, RenderMetadata]:
     """Render the three-layer composite for a capital or urban prefab,
     optionally with an extra building layer for urban-improvement
     composites.
@@ -118,7 +124,11 @@ def render_layered_ground(
             UVs and producing garbled output.
 
     Returns:
-        PIL RGBA image, autocropped with `padding`.
+        Tuple of ``(image, metadata)``. ``image`` is the autocropped
+        composite. ``metadata`` is tagged ``composition="layered"`` and
+        its world bbox covers the full composited scene
+        (biome ∪ PVT ∪ buildings); per-ankh should not relative-scale
+        layered outputs against per-prefab ones.
     """
     # --- Bake buildings and nation PVT planes first; their union XZ extent
     #     is what we'll scale the biome to cover. The biome prefab
@@ -240,7 +250,7 @@ def render_layered_ground(
         else:
             composite = Image.alpha_composite(composite, layer)
 
-    biome_layer = render_mesh_to_image(
+    biome_layer, layer_metadata = render_mesh_to_image(
         biome_obj,
         biome_base.diffuse,
         width=width,
@@ -253,7 +263,7 @@ def render_layered_ground(
     _stack(biome_layer)
 
     for _plane, plane_obj, tex in nation_planes_with_texture:
-        nation_layer = render_mesh_to_image(
+        nation_layer, _ = render_mesh_to_image(
             plane_obj,
             tex,
             width=width,
@@ -268,7 +278,7 @@ def render_layered_ground(
     for baked in (primary_buildings, extra_buildings):
         if baked is None:
             continue
-        building_layer = render_mesh_to_image(
+        building_layer, _ = render_mesh_to_image(
             baked.obj,
             baked.tex,
             width=width,
@@ -282,4 +292,39 @@ def render_layered_ground(
         _stack(building_layer)
 
     assert composite is not None
-    return autocrop_with_padding(composite, padding=padding)
+    final_img, cropped_dims_pre_upscale = autocrop_with_padding(composite, padding=padding)
+
+    # Build the layered metadata. All inner layer renders shared
+    # `bbox_override=shared_bbox` and `autocrop=False`, so any layer's
+    # metadata carries the same framing constants and a
+    # `world_units_per_output_pixel` equal to the pre-crop scale. After
+    # the final composite autocrop (and possible LANCZOS upscale to
+    # min_size), correct for the upscale factor.
+    output_w, output_h = final_img.size
+    upscale_factor = (
+        output_w / cropped_dims_pre_upscale[0] if cropped_dims_pre_upscale[0] > 0 else 1.0
+    )
+    pre_crop_units_per_pixel = layer_metadata.render.world_units_per_output_pixel
+    final_units_per_pixel = pre_crop_units_per_pixel / upscale_factor if upscale_factor > 0 else 0.0
+
+    shared_min, shared_max = shared_bbox
+    shared_extent = shared_max - shared_min
+    layered_metadata = RenderMetadata(
+        version=SCHEMA_VERSION,
+        composition="layered",
+        world=WorldBounds(
+            max_extent=float(shared_extent.max()),
+            bbox_min=(float(shared_min[0]), float(shared_min[1]), float(shared_min[2])),
+            bbox_max=(float(shared_max[0]), float(shared_max[1]), float(shared_max[2])),
+        ),
+        framing=layer_metadata.framing,
+        render=RenderInfo(
+            pre_crop_width_px=int(width),
+            pre_crop_height_px=int(height),
+            output_width_px=int(output_w),
+            output_height_px=int(output_h),
+            world_units_per_output_pixel=float(final_units_per_pixel),
+        ),
+    )
+
+    return final_img, layered_metadata

@@ -10,6 +10,14 @@ from typing import TYPE_CHECKING
 import numpy as np
 from numpy.typing import NDArray
 
+from pinacotheca.render_metadata import (
+    SCHEMA_VERSION,
+    FramingInfo,
+    RenderInfo,
+    RenderMetadata,
+    WorldBounds,
+)
+
 if TYPE_CHECKING:
     from PIL import Image
 
@@ -291,9 +299,10 @@ void main() {
 
 def autocrop_with_padding(
     img: "Image.Image", padding: int = 32, min_size: int = 256
-) -> "Image.Image":
+) -> tuple["Image.Image", tuple[int, int]]:
     """
-    Crop image to non-transparent content with padding.
+    Crop image to non-transparent content with padding, then optionally
+    LANCZOS-upscale tiny crops to a minimum size.
 
     Args:
         img: RGBA image to crop
@@ -301,13 +310,18 @@ def autocrop_with_padding(
         min_size: Minimum output dimension
 
     Returns:
-        Cropped and padded image
+        ``(image, (cropped_w_pre_upscale, cropped_h_pre_upscale))``. The
+        returned image may have been LANCZOS-resized when both cropped
+        dimensions were below ``min_size``; the second element gives the
+        cropped dimensions *before* that upscale, so callers can derive
+        the upscale factor (and thus correct world-units-per-output-pixel
+        scaling).
     """
     from PIL import Image
 
     bbox = img.getbbox()
     if not bbox:
-        return img
+        return img, img.size
 
     # Expand bbox with padding
     left = max(0, bbox[0] - padding)
@@ -317,6 +331,7 @@ def autocrop_with_padding(
 
     # Crop to content
     cropped = img.crop((left, top, right, bottom))
+    cropped_dims = cropped.size
 
     # Ensure minimum size while maintaining aspect ratio
     w, h = cropped.size
@@ -326,7 +341,7 @@ def autocrop_with_padding(
         new_h = int(h * scale)
         cropped = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-    return cropped
+    return cropped, cropped_dims
 
 
 def render_mesh_to_image(
@@ -343,7 +358,7 @@ def render_mesh_to_image(
     packed_pbr_image: "Image.Image | None" = None,
     occlusion_strength: float = 0.6,
     normal_map_image: "Image.Image | None" = None,
-) -> "Image.Image":
+) -> tuple["Image.Image", "RenderMetadata"]:
     """
     Render a textured 3D mesh to a 2D PNG image.
 
@@ -395,7 +410,12 @@ def render_mesh_to_image(
             geometric normals.
 
     Returns:
-        PIL Image with rendered mesh on transparent background
+        Tuple of ``(image, metadata)``. ``image`` is the rendered PIL
+        image on transparent background; ``metadata`` is the
+        :class:`RenderMetadata` describing world bbox, framing, and
+        output-pixel scale. Composition defaults to ``"prefab"``;
+        :func:`render_layered_ground` wraps this and overrides to
+        ``"layered"`` for capital/urban/composite outputs.
 
     Raises:
         ImportError: If moderngl is not available
@@ -487,7 +507,8 @@ def render_mesh_to_image(
             center = (min_bounds + max_bounds) / 2
             extent = max_bounds - min_bounds
         else:
-            center, extent, _ = compute_mesh_bounds(vertices)
+            center, extent, min_bounds = compute_mesh_bounds(vertices)
+            max_bounds = min_bounds + extent
         max_extent = float(extent.max())
 
         # Detect if mesh is lying down (wider than tall). Heuristic only
@@ -499,11 +520,32 @@ def render_mesh_to_image(
 
         aspect = width / height
 
+        # Per-branch framing constants captured for the metadata sidecar.
+        meta_projection: str
+        meta_tilt_deg: float | None
+        meta_distance: float
+        meta_frustum_half_size: float | None
+        meta_fov_deg: float | None
+        # Pre-crop world units per horizontal pixel — at the framing
+        # plane for ortho, at the center plane for perspective. Used to
+        # derive output `worldUnitsPerOutputPixel` after autocrop +
+        # optional LANCZOS upscale.
+        pre_crop_units_per_pixel: float
+
         if is_horizontal:
             # Model is lying down - view from +X axis with Z as up
-            eye = center + np.array([max_extent * 1.5, 0.1, 0])
+            distance_h = max_extent * 1.5
+            eye = center + np.array([distance_h, 0.1, 0])
             up_vector = np.array([0, 0, 1])
             proj = perspective_matrix(np.radians(60.0), aspect, 0.01, 1000)
+            meta_projection = "perspective"
+            meta_tilt_deg = None
+            meta_distance = distance_h
+            meta_frustum_half_size = None
+            meta_fov_deg = 60.0
+            pre_crop_units_per_pixel = (
+                2.0 * distance_h * float(np.tan(np.radians(60.0 / 2.0)))
+            ) / width
         elif force_upright:
             # Building/resource view: 30° downward, orthographic. The game's
             # camera is ~25–40 world units from any single hex (a hex is ~4
@@ -523,11 +565,26 @@ def render_mesh_to_image(
             half_w = max_extent * 0.66
             half_h = half_w / aspect
             proj = orthographic_matrix(-half_w, half_w, -half_h, half_h, 0.01, 1000)
+            meta_projection = "orthographic"
+            meta_tilt_deg = tilt_deg
+            meta_distance = distance
+            meta_frustum_half_size = half_w
+            meta_fov_deg = None
+            pre_crop_units_per_pixel = (2.0 * half_w) / width
         else:
             # Normal upright model - view from front
-            eye = center + np.array([0, 0.1, max_extent * 1.5])
+            distance_u = max_extent * 1.5
+            eye = center + np.array([0, 0.1, distance_u])
             up_vector = np.array([0, 1, 0])
             proj = perspective_matrix(np.radians(60.0), aspect, 0.01, 1000)
+            meta_projection = "perspective"
+            meta_tilt_deg = None
+            meta_distance = distance_u
+            meta_frustum_half_size = None
+            meta_fov_deg = 60.0
+            pre_crop_units_per_pixel = (
+                2.0 * distance_u * float(np.tan(np.radians(60.0 / 2.0)))
+            ) / width
 
         view = look_at_matrix(eye, center, up_vector)
         mvp = (proj @ view).T  # Transpose for column-major OpenGL
@@ -552,9 +609,46 @@ def render_mesh_to_image(
 
         # Auto-crop to content
         if autocrop:
-            img = autocrop_with_padding(img, padding=padding)
+            img, cropped_dims_pre_upscale = autocrop_with_padding(img, padding=padding)
+        else:
+            cropped_dims_pre_upscale = img.size
 
-        return img
+        # Derive output world-units-per-pixel from the pre-crop scale,
+        # corrected for any LANCZOS upscale applied by autocrop_with_padding
+        # (when cropped < min_size, output_w > cropped_w_pre_upscale).
+        output_w, output_h = img.size
+        upscale_factor = (
+            output_w / cropped_dims_pre_upscale[0] if cropped_dims_pre_upscale[0] > 0 else 1.0
+        )
+        world_units_per_output_pixel = (
+            pre_crop_units_per_pixel / upscale_factor if upscale_factor > 0 else 0.0
+        )
+
+        metadata = RenderMetadata(
+            version=SCHEMA_VERSION,
+            composition="prefab",
+            world=WorldBounds(
+                max_extent=max_extent,
+                bbox_min=(float(min_bounds[0]), float(min_bounds[1]), float(min_bounds[2])),
+                bbox_max=(float(max_bounds[0]), float(max_bounds[1]), float(max_bounds[2])),
+            ),
+            framing=FramingInfo(
+                projection=meta_projection,  # type: ignore[arg-type]
+                tilt_deg=meta_tilt_deg,
+                distance=float(meta_distance),
+                frustum_half_size=meta_frustum_half_size,
+                fov_deg=meta_fov_deg,
+            ),
+            render=RenderInfo(
+                pre_crop_width_px=int(width),
+                pre_crop_height_px=int(height),
+                output_width_px=int(output_w),
+                output_height_px=int(output_h),
+                world_units_per_output_pixel=float(world_units_per_output_pixel),
+            ),
+        )
+
+        return img, metadata
 
     finally:
         ctx.release()

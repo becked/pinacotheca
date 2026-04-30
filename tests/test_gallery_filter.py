@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import re
 from pathlib import Path
@@ -12,6 +11,7 @@ import pytest
 from pinacotheca.gallery_filter import (
     GALLERY_EXCLUDE_GLOBS,
     GALLERY_EXCLUDE_REASON,
+    _compile_glob,
     _validate_patterns,
     matches_filter,
     write_filter_sidecar,
@@ -33,12 +33,28 @@ class TestMatchesFilter:
     @pytest.mark.parametrize(
         "rel_path",
         [
+            # Per-render JSON sidecars under any of the 3D-output dirs.
+            "improvements/IMPROVEMENT_3D_LIBRARY.json",
+            "improvements/IMPROVEMENT_3D_GREECE_CAPITAL.json",
+            "improvements/IMPROVEMENT_3D_LIBRARY_GREECE_URBAN.json",
+            "resources/RESOURCE_3D_HORSE_HERD.json",
+            "units/UNIT_3D_ARCHER.json",
+        ],
+    )
+    def test_render_metadata_sidecars_match(self, rel_path: str) -> None:
+        assert matches_filter(rel_path)
+
+    @pytest.mark.parametrize(
+        "rel_path",
+        [
             "improvements/IMPROVEMENT_3D_LIBRARY.png",  # standalone improvement
             "improvements/IMPROVEMENT_3D_GREECE_CAPITAL.png",  # capital
             "improvements/IMPROVEMENT_3D_GREECE_URBAN.png",  # urban tile (only 1 underscore-separated nation)
             "improvements/IMPROVEMENT_3D_CITY.png",
             "portraits/ROME_LEADER_MALE_01.png",
             "resources/RESOURCE_3D_HORSE.png",
+            # JSON sidecars in non-3D-output directories should NOT match.
+            "portraits/leaderInfo.json",
         ],
     )
     def test_non_urban_composites_do_not_match(self, rel_path: str) -> None:
@@ -100,10 +116,16 @@ class TestSidecar:
 
 class TestPythonTSParity:
     """Asserts the TS-side glob→regex translation produces identical matches to
-    Python's fnmatch.fnmatchcase across a representative path corpus.
+    the Python ``_compile_glob`` (used by ``matches_filter``) across a
+    representative path corpus.
 
     The TS implementation is in web/scripts/generate-manifest.ts:globToRegExp;
-    here we replicate it in Python regex so the assertion is pure-Python.
+    here we replicate it inline so the parity check is pure-Python and
+    fails loudly if either side drifts. Note: the older revision of this
+    test compared against ``fnmatch.fnmatchcase`` — but stdlib fnmatch
+    lets ``*`` cross ``/``, which silently broadens patterns. The Python
+    implementation now mirrors TS behavior; this test pins them
+    together.
     """
 
     @staticmethod
@@ -124,15 +146,26 @@ class TestPythonTSParity:
         "portraits/IMPROVEMENT_3D_LIBRARY_GREECE_URBAN.png",
         "improvements/sub/IMPROVEMENT_3D_LIBRARY_GREECE_URBAN.png",
         "resources/RESOURCE_3D_HORSE.png",
+        # Render-metadata sidecars (excluded from the gh-pages deploy).
+        "improvements/IMPROVEMENT_3D_LIBRARY.json",
+        "improvements/IMPROVEMENT_3D_GREECE_CAPITAL.json",
+        "improvements/IMPROVEMENT_3D_LIBRARY_GREECE_URBAN.json",
+        "resources/RESOURCE_3D_HORSE_HERD.json",
+        "resources/RESOURCE_3D_HORSE_SOLO.json",
+        "units/UNIT_3D_ARCHER.json",
+        # Edge case: a JSON not in any 3D-output category — should NOT match.
+        "portraits/leaderInfo.json",
+        # Edge case: a JSON in a subdirectory — `*` does not cross `/`.
+        "improvements/sub/IMPROVEMENT_3D_LIBRARY.json",
     ]
 
     @pytest.mark.parametrize("pattern", GALLERY_EXCLUDE_GLOBS)
     def test_parity(self, pattern: str) -> None:
         ts_re = self._ts_glob_to_regex(pattern)
+        py_re = _compile_glob(pattern)
         for path in self.PATHS:
-            py_match = fnmatch.fnmatchcase(path, pattern)
+            py_match = bool(py_re.match(path))
             ts_match = bool(ts_re.match(path))
             assert py_match == ts_match, (
-                f"pattern={pattern!r} path={path!r}: "
-                f"python fnmatch={py_match} != ts regex={ts_match}"
+                f"pattern={pattern!r} path={path!r}: python={py_match} != ts={ts_match}"
             )

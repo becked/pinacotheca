@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+### Added
+- Per-render JSON metadata sidecar next to every 3D PNG output
+  (`IMPROVEMENT_3D_*`, `RESOURCE_3D_*`, `UNIT_3D_*`, layered tiles).
+  Schema lives in new module `src/pinacotheca/render_metadata.py`
+  (`version: 1`, camelCase keys). Exposes `world.maxExtent`,
+  `world.bboxMin/Max`, the camera framing constants, and
+  `render.worldUnitsPerOutputPixel` — the last accounts for both the
+  autocrop and the LANCZOS upscale `autocrop_with_padding` applies when
+  cropped content is below `min_size`. Layered outputs are tagged
+  `composition: "layered"` (capitals, urbans, generic-city,
+  per-(improvement, nation) urban composites); standalone outputs are
+  `"prefab"`. Closes #4. See `docs/extracting-3d-buildings.md`
+  "Metadata sidecar" for the full schema and per-ankh's intended
+  consumption pattern.
+
+### Changed
+- `render_mesh_to_image` and `render_layered_ground` return
+  `(Image, RenderMetadata)` tuples instead of bare `Image`. All
+  internal call sites updated; this is a public API change to the
+  exported renderer entry point.
+- `autocrop_with_padding` returns `(image, cropped_dims_pre_upscale)`
+  so the renderer can derive a correct
+  `worldUnitsPerOutputPixel` when the min-size LANCZOS upscale fires.
+- `gallery_filter.matches_filter` now uses an inline glob→regex
+  translator (`_compile_glob`) instead of `fnmatch.fnmatchcase`. The
+  stdlib version lets `*` cross `/`, which silently broadened patterns
+  like `improvements/*.json` to also match
+  `improvements/sub/foo.json` and diverge from the TS-side
+  `globToRegExp`. The new compiler matches TS behavior; the parity
+  test in `tests/test_gallery_filter.py` was updated to compare the
+  Python compiler against the TS regex (no longer fnmatch). Behavior
+  for the existing single-`*` patterns is unchanged.
+- `GALLERY_EXCLUDE_GLOBS` extended to drop JSON sidecars
+  (`improvements/*.json`, `resources/*.json`, `units/*.json`) from the
+  gh-pages deploy. Sidecars are consumed by per-ankh from the local
+  tree; the deployed SvelteKit gallery only displays PNGs.
+
 ## [2.2.0] - 2026-04-30
 
 ### Added

@@ -270,6 +270,24 @@ and `_HERD`.
 Per-ankh keys on these filenames. Renaming is a breaking change
 across both repos.
 
+### Metadata sidecar
+
+Each PNG above ships with a `<NAME>.json` sidecar (e.g.
+`RESOURCE_3D_HORSE_SOLO.png` ↔ `RESOURCE_3D_HORSE_SOLO.json`)
+containing the world bbox and camera framing of that specific render.
+Per-ankh uses `world.maxExtent` to size the resource correctly relative
+to the rural improvement under it (Camp/Pasture/Mine/Quarry/Lumbermill)
+— the per-prefab tight bbox would otherwise cause a herd of horses to
+fill the same hex fraction as a Pasture's fence.
+
+The SOLO/HERD/SOLO_FAMILY/HERD_FAMILY variants each get their own
+sidecar with their own bbox; the herd group is wider in world-X/Z than
+the single rig, so the two sidecars carry different `maxExtent` values
+even when the underlying prefab is the same.
+
+See `docs/extracting-3d-buildings.md` "Metadata sidecar" for the full
+schema and field semantics.
+
 ## What we don't render correctly yet
 
 - **Salt**: missing the deposit-chunks scatter. `Salt_Deposit_Chunks`

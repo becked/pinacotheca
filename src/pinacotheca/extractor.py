@@ -412,6 +412,7 @@ def extract_unit_meshes(
         raise
 
     try:
+        from pinacotheca.render_metadata import write_sidecar
         from pinacotheca.renderer import render_mesh_to_image
     except ImportError as e:
         if verbose:
@@ -532,8 +533,9 @@ def extract_unit_meshes(
                 texture_image = tex_data.image
 
                 if obj_data and texture_image:
-                    img = render_mesh_to_image(obj_data, texture_image)
+                    img, meta = render_mesh_to_image(obj_data, texture_image)
                     img.save(out_path, optimize=False)
+                    write_sidecar(out_path, meta)
                     rendered += 1
                     if verbose:
                         print(f"  [OK] {output_name}")
@@ -792,6 +794,7 @@ def extract_improvement_meshes(
         raise
 
     try:
+        from pinacotheca.render_metadata import write_sidecar
         from pinacotheca.renderer import render_mesh_to_image
     except ImportError as e:
         if verbose:
@@ -1155,7 +1158,7 @@ def extract_improvement_meshes(
                     packed_pbr = find_packed_pbr_for_prefab(combined)
                     normal_map = find_normal_map_for_prefab(combined)
                     try:
-                        img = render_mesh_to_image(
+                        img, meta = render_mesh_to_image(
                             obj_str,
                             tex_img,
                             force_upright=True,
@@ -1163,6 +1166,7 @@ def extract_improvement_meshes(
                             normal_map_image=normal_map,
                         )
                         img.save(out_p, optimize=False)
+                        write_sidecar(out_p, meta)
                         files_written += 1
                         del img
                         del tex_img
@@ -1217,37 +1221,36 @@ def extract_improvement_meshes(
 
                 def _render_combined(
                     combined: list[Any], _name: str = output_name
-                ) -> tuple[Any, str]:
-                    """Returns (PIL.Image | None, status). Status is one of
-                    'ok', 'no_geometry', 'no_texture', 'render_error'."""
+                ) -> tuple[Any, Any, str]:
+                    """Returns (PIL.Image | None, RenderMetadata | None, status).
+                    Status is one of 'ok', 'no_geometry', 'no_texture',
+                    'render_error'."""
                     if not combined:
-                        return None, "no_geometry"
+                        return None, None, "no_geometry"
                     obj_str = bake_to_obj(combined, pre_rotation_y_deg=180.0)
                     if not obj_str:
-                        return None, "no_geometry"
+                        return None, None, "no_geometry"
                     tex_img = find_diffuse_for_prefab(combined)
                     if tex_img is None:
-                        return None, "no_texture"
+                        return None, None, "no_texture"
                     packed_pbr = find_packed_pbr_for_prefab(combined)
                     normal_map = find_normal_map_for_prefab(combined)
                     try:
-                        return (
-                            render_mesh_to_image(
-                                obj_str,
-                                tex_img,
-                                force_upright=True,
-                                packed_pbr_image=packed_pbr,
-                                normal_map_image=normal_map,
-                            ),
-                            "ok",
+                        rendered_img, rendered_meta = render_mesh_to_image(
+                            obj_str,
+                            tex_img,
+                            force_upright=True,
+                            packed_pbr_image=packed_pbr,
+                            normal_map_image=normal_map,
                         )
+                        return rendered_img, rendered_meta, "ok"
                     except Exception as e:
                         if verbose:
                             print(f"  [ERROR] {_name} - render failed: {e}")
-                        return None, "render_error"
+                        return None, None, "render_error"
 
                 herd_combined = _build_combined(herd_walk)
-                herd_img, herd_status = _render_combined(herd_combined)
+                herd_img, herd_meta, herd_status = _render_combined(herd_combined)
                 if herd_status != "ok":
                     if verbose:
                         if herd_status == "no_geometry":
@@ -1266,7 +1269,7 @@ def extract_improvement_meshes(
 
                 if solo_walk:
                     solo_combined = _build_combined(solo_walk)
-                    solo_img, solo_status = _render_combined(solo_combined)
+                    solo_img, solo_meta, solo_status = _render_combined(solo_combined)
                     if solo_status != "ok":
                         # Solo subtree exists but failed to render — surface
                         # the issue and skip the whole prefab to avoid
@@ -1284,13 +1287,16 @@ def extract_improvement_meshes(
                 else:
                     # No SoloResource subtree — solo == herd content.
                     solo_img = herd_img
+                    solo_meta = herd_meta
                     has_solo_subtree = False
 
                 try:
                     if need_herd:
                         herd_img.save(herd_path, optimize=False)
+                        write_sidecar(herd_path, herd_meta)
                     if need_solo:
                         solo_img.save(solo_path, optimize=False)
+                        write_sidecar(solo_path, solo_meta)
                     rendered += 1
                     if verbose:
                         marker = "(solo+herd)" if has_solo_subtree else "(solo=herd)"
@@ -1344,8 +1350,9 @@ def extract_improvement_meshes(
                         print(f"  [WARN] {output_name} - PVT walk failed: {e}")
                     pvt_planes = []
                 try:
-                    img = render_layered_ground(combined, pvt_planes, biome_base, env)
+                    img, meta = render_layered_ground(combined, pvt_planes, biome_base, env)
                     img.save(out_path, optimize=False)
+                    write_sidecar(out_path, meta)
                     rendered += 1
                     if verbose:
                         print(
@@ -1380,7 +1387,7 @@ def extract_improvement_meshes(
             normal_map = find_normal_map_for_prefab(combined)
 
             try:
-                img = render_mesh_to_image(
+                img, meta = render_mesh_to_image(
                     obj_str,
                     tex_img,
                     force_upright=True,
@@ -1388,6 +1395,7 @@ def extract_improvement_meshes(
                     normal_map_image=normal_map,
                 )
                 img.save(out_path, optimize=False)
+                write_sidecar(out_path, meta)
                 rendered += 1
                 if verbose:
                     print(f"  [OK] {output_name} ({len(combined)} parts)")
@@ -1487,6 +1495,7 @@ def extract_urban_composite_meshes(
         walk_prefab,
     )
     from pinacotheca.pvt_splats import find_pvt_splats_in_prefab
+    from pinacotheca.render_metadata import write_sidecar
     from pinacotheca.terrain_clutter_splat import find_terrain_clutter_splats_in_prefab
 
     if game_data is None:
@@ -1666,7 +1675,7 @@ def extract_urban_composite_meshes(
             urban_buildings = cache["mesh_parts"] + culled_urban_clutter
 
             try:
-                img = render_layered_ground(
+                img, meta = render_layered_ground(
                     urban_buildings,
                     cache["pvt_planes"],
                     biome_base,
@@ -1674,6 +1683,7 @@ def extract_urban_composite_meshes(
                     extra_building_parts=imp_combined,
                 )
                 img.save(out_path, optimize=False)
+                write_sidecar(out_path, meta)
                 rendered += 1
                 if verbose:
                     n_culled = len(cache["typed_clutter"]) - len(culled_urban_clutter)

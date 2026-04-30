@@ -288,6 +288,50 @@ A small `PREFAB_DECODE_BLACKLIST` constant in `extractor.py` skips prefabs whose
 - `tests/test_prefab.py` — synthetic unit tests for the prefab math (quaternion → matrix, TRS chain, normal transform under non-uniform scale, X-flip-once, winding flip on negative scale, splat-Y helpers, `cut_y_override` safety guards, `pre_rotation_y_deg` Z-flip).
 - `scripts/probes/` — exploration scripts used during the investigation (mesh enumerator, texture finder, prefab inspector). Not required at runtime.
 
+## Metadata sidecar
+
+Every 3D PNG output (improvements, resources, units, layered tiles) is accompanied by a JSON sidecar with the same stem — e.g. `IMPROVEMENT_3D_LIBRARY.png` ↔ `IMPROVEMENT_3D_LIBRARY.json`. The sidecar exposes the world-space bounding box and camera framing used for the render so consumers can compose two prefabs at correct relative scale. Schema and emission code live in `src/pinacotheca/render_metadata.py`.
+
+Primary consumer: per-ankh, the sister hex-map renderer. Today per-ankh resizes both improvement and resource sprites to a uniform fraction of the hex tile (`SAFE_SCALE = 0.77`), so on a Pasture-with-Horse tile the herd dwarfs the fence. With the sidecar, per-ankh reads each prefab's `world.maxExtent` and scales by world-size ratio.
+
+Schema (`version: 1`):
+
+```json
+{
+  "version": 1,
+  "composition": "prefab",
+  "world": {
+    "maxExtent": 1.84,
+    "bboxMin": [-0.92, 0.0, -0.92],
+    "bboxMax": [0.92, 1.5, 0.92]
+  },
+  "framing": {
+    "projection": "orthographic",
+    "tiltDeg": 30.0,
+    "distance": 2.944,
+    "frustumHalfSize": 1.214,
+    "fovDeg": null
+  },
+  "render": {
+    "preCropWidthPx": 2048,
+    "preCropHeightPx": 2048,
+    "outputWidthPx": 412,
+    "outputHeightPx": 388,
+    "worldUnitsPerOutputPixel": 0.00592
+  }
+}
+```
+
+Field semantics:
+
+- `composition`: `"prefab"` for standalone improvements / resources / units (per-prefab tight bbox); `"layered"` for capitals, urbans, generic-city (`IMPROVEMENT_3D_CITY*.png`), and per-(improvement, nation) urban composites — the bbox covers the *whole* composited scene (biome ∪ PVT ∪ buildings), so per-ankh should not relative-scale layered outputs against per-prefab ones.
+- `world.maxExtent`: the value the renderer also feeds into `distance = max_extent * 1.6` and `half_w = max_extent * 0.66`. Primary signal for relative scaling: `R.maxExtent / I.maxExtent`.
+- `world.bboxMin/Max`: full Unity-world bbox for non-uniform scaling (e.g. when two prefabs share a maxExtent but differ in aspect).
+- `framing`: bookkeeping. `frustumHalfSize` is set for orthographic (improvements / resources / layered); `fovDeg` for perspective (units). The unused field is `null`.
+- `render.worldUnitsPerOutputPixel`: load-bearing for absolute pixel placement on a tile. Accounts for both the autocrop and the LANCZOS upscale `autocrop_with_padding` applies when content is < 256px on both axes — consumers should use this scalar directly rather than re-deriving from `frustumHalfSize` and `preCropWidthPx`, which would miss the upscale correction.
+
+The sidecars are excluded from the gh-pages deploy via `GALLERY_EXCLUDE_GLOBS` (per-ankh consumes `extracted/` locally; the deployed SvelteKit gallery only displays PNGs). See `src/pinacotheca/gallery_filter.py` and the section above for the deploy filter.
+
 ## Reference: game source files
 
 These are decompiled C# files from `decompiled/Assembly-CSharp/` in the Old World install directory, useful for figuring out the in-game rendering setup:

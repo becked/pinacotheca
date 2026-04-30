@@ -18,6 +18,13 @@ from pinacotheca import layered_render as lr
 from pinacotheca.biome_base import BiomeBase
 from pinacotheca.clutter_transforms import PPtr
 from pinacotheca.pvt_splats import PvtPlanePart, PVTSplatFields
+from pinacotheca.render_metadata import (
+    SCHEMA_VERSION,
+    FramingInfo,
+    RenderInfo,
+    RenderMetadata,
+    WorldBounds,
+)
 
 
 def _solid_rgba(color: tuple[int, int, int, int], size: tuple[int, int] = (32, 32)) -> Image.Image:
@@ -126,7 +133,7 @@ def _install_stubs(monkeypatch, layer_colors: list[tuple[int, int, int, int]]):
         packed_pbr_image: Image.Image | None = None,  # noqa: ARG001
         occlusion_strength: float = 0.6,  # noqa: ARG001
         normal_map_image: Image.Image | None = None,  # noqa: ARG001
-    ) -> Image.Image:
+    ) -> tuple[Image.Image, RenderMetadata]:
         color = next(color_iter)
         calls.append(
             _RenderCall(
@@ -137,13 +144,39 @@ def _install_stubs(monkeypatch, layer_colors: list[tuple[int, int, int, int]]):
                 color=color,
             )
         )
-        return _solid_rgba(color, size=(width, height))
+        # Stub metadata — the orchestrator only uses .render and .framing
+        # from the buildings layer, then overrides everything else.
+        meta = RenderMetadata(
+            version=SCHEMA_VERSION,
+            composition="prefab",
+            world=WorldBounds(max_extent=1.0, bbox_min=(0.0, 0.0, 0.0), bbox_max=(1.0, 1.0, 1.0)),
+            framing=FramingInfo(
+                projection="orthographic",
+                tilt_deg=30.0,
+                distance=1.6,
+                frustum_half_size=0.66,
+                fov_deg=None,
+            ),
+            render=RenderInfo(
+                pre_crop_width_px=width,
+                pre_crop_height_px=height,
+                output_width_px=width,
+                output_height_px=height,
+                world_units_per_output_pixel=(2.0 * 0.66) / width,
+            ),
+        )
+        return _solid_rgba(color, size=(width, height)), meta
 
     monkeypatch.setattr(lr, "render_mesh_to_image", fake_render_mesh_to_image)
 
     # autocrop_with_padding pass-through; the orchestrator's final crop is
-    # tested separately on real images.
-    monkeypatch.setattr(lr, "autocrop_with_padding", lambda img, padding=0: img)  # noqa: ARG005
+    # tested separately on real images. Return (image, dims) per the new
+    # autocrop contract.
+    monkeypatch.setattr(
+        lr,
+        "autocrop_with_padding",
+        lambda img, padding=0: (img, img.size),  # noqa: ARG005
+    )
 
     return calls
 
@@ -170,7 +203,7 @@ def test_layer_order_biome_then_pvt_sorted_then_buildings(monkeypatch) -> None:
     ]
     calls = _install_stubs(monkeypatch, layer_colors)
 
-    img = lr.render_layered_ground(building_parts, pvt_planes, biome, env=None)
+    img, meta = lr.render_layered_ground(building_parts, pvt_planes, biome, env=None)
 
     # 4 render passes (1 biome + 2 PVT + 1 buildings)
     assert len(calls) == 4
@@ -189,6 +222,11 @@ def test_layer_order_biome_then_pvt_sorted_then_buildings(monkeypatch) -> None:
     # Top-of-stack is the buildings color (40,40,0,255).
     arr = np.asarray(img.convert("RGBA"))
     assert tuple(arr[0, 0]) == (40, 40, 0, 255)
+    # Metadata is tagged as layered and its world bbox covers the union
+    # of all layers (matches the shared bbox passed to every pass).
+    assert meta.composition == "layered"
+    np.testing.assert_array_equal(np.asarray(meta.world.bbox_min), first[0])
+    np.testing.assert_array_equal(np.asarray(meta.world.bbox_max), first[1])
 
 
 def test_empty_pvt_planes_renders_biome_plus_buildings(monkeypatch) -> None:
@@ -205,8 +243,10 @@ def test_empty_pvt_planes_renders_biome_plus_buildings(monkeypatch) -> None:
     ]
     calls = _install_stubs(monkeypatch, layer_colors)
 
-    lr.render_layered_ground([object()], [], biome, env=None)
+    img, meta = lr.render_layered_ground([object()], [], biome, env=None)
     assert len(calls) == 2
+    assert meta.composition == "layered"
+    assert img is not None
 
 
 def test_no_buildings_renders_biome_only(monkeypatch) -> None:
@@ -220,7 +260,8 @@ def test_no_buildings_renders_biome_only(monkeypatch) -> None:
     layer_colors = [(10, 0, 0, 255)]  # biome only
     calls = _install_stubs(monkeypatch, layer_colors)
 
-    img = lr.render_layered_ground([], [], biome, env=None)
+    img, meta = lr.render_layered_ground([], [], biome, env=None)
     assert len(calls) == 1
     arr = np.asarray(img.convert("RGBA"))
     assert tuple(arr[0, 0]) == (10, 0, 0, 255)
+    assert meta.composition == "layered"

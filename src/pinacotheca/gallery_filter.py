@@ -18,19 +18,26 @@ test in ``tests/test_gallery_filter.py``.
 
 from __future__ import annotations
 
-import fnmatch
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
 GALLERY_EXCLUDE_GLOBS: list[str] = [
     "improvements/IMPROVEMENT_3D_*_*_URBAN.png",
+    "improvements/*.json",
+    "resources/*.json",
+    "units/*.json",
 ]
 
 GALLERY_EXCLUDE_REASON: str = (
     "Per-(improvement, nation) urban composites — used by per-ankh's atlas "
     "renderer (sister tool) but excluded from the gh-pages gallery deploy "
-    "because they push the site over GitHub Pages' 1 GB limit."
+    "because they push the site over GitHub Pages' 1 GB limit. "
+    "Render-metadata JSON sidecars (`*.json` next to each 3D PNG) are "
+    "consumed by per-ankh from the local `extracted/` tree; they are not "
+    "needed by the deployed SvelteKit gallery so are excluded from the "
+    "gh-pages bundle."
 )
 
 
@@ -48,14 +55,36 @@ def _validate_patterns(patterns: list[str]) -> None:
 _validate_patterns(GALLERY_EXCLUDE_GLOBS)
 
 
+def _compile_glob(pattern: str) -> re.Pattern[str]:
+    """Translate a single-`*` glob to an anchored regex where `*` does
+    not cross `/`. Mirrors the TS-side ``globToRegExp`` in
+    ``web/scripts/generate-manifest.ts`` byte-for-byte so the parity
+    test in ``tests/test_gallery_filter.py`` is a pure-Python check.
+
+    NOTE: Python's stdlib ``fnmatch.fnmatchcase`` is *not* used here — it
+    lets ``*`` cross ``/``, which would silently broaden patterns like
+    ``improvements/*.json`` to also match ``improvements/sub/foo.json``
+    and diverge from the TS deploy filter.
+    """
+    # Escape regex metachars except `*`.
+    escaped = re.sub(r"([.+^${}()|\[\]\\])", r"\\\1", pattern)
+    escaped = escaped.replace("*", "[^/]*")
+    return re.compile(f"^{escaped}$")
+
+
+_COMPILED: list[re.Pattern[str]] = [_compile_glob(p) for p in GALLERY_EXCLUDE_GLOBS]
+
+
 def matches_filter(rel_path: str, patterns: list[str] | None = None) -> bool:
     """Return True if ``rel_path`` matches any exclusion glob.
 
     ``rel_path`` is interpreted relative to ``extracted/sprites/`` and must use
-    posix-style separators.
+    posix-style separators. ``*`` does not cross ``/``.
     """
-    pats = patterns if patterns is not None else GALLERY_EXCLUDE_GLOBS
-    return any(fnmatch.fnmatchcase(rel_path, p) for p in pats)
+    if patterns is None:
+        return any(p.match(rel_path) is not None for p in _COMPILED)
+    compiled = [_compile_glob(p) for p in patterns]
+    return any(p.match(rel_path) is not None for p in compiled)
 
 
 def write_filter_sidecar(extracted_dir: Path) -> Path:

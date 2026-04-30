@@ -103,14 +103,14 @@ def test_bbox_override_shrinks_the_footprint() -> None:
     obj = _unit_quad_obj()
     tex = _solid_texture()
 
-    no_override = render_mesh_to_image(
+    no_override, _ = render_mesh_to_image(
         obj, tex, width=256, height=256, autocrop=False, force_upright=True
     )
     big_bbox = (
         np.array([-4.0, 0.0, -4.0]),
         np.array([4.0, 0.0, 4.0]),
     )
-    overridden = render_mesh_to_image(
+    overridden, _ = render_mesh_to_image(
         obj,
         tex,
         width=256,
