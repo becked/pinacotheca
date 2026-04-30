@@ -113,3 +113,31 @@ rm extracted/sprites/improvements/IMPROVEMENT_3D_*_*_URBAN.png
 
 pinacotheca   # runs sprites + units + improvements + urban composites
 ```
+
+## Gallery deployment
+
+These composites are **excluded from the public gh-pages gallery** (and from
+the SvelteKit manifest that drives it). They live in `extracted/sprites/` for
+per-ankh's atlas pipeline but ship to ~1.3 GB across 719 files — pushing the
+total deployed size over GitHub Pages' 1 GB hard cap. The deploy filter lives
+in `src/pinacotheca/gallery_filter.py` and is documented in CLAUDE.md under
+"Gallery deploy filter".
+
+**Naming subtlety that matters here.** The exclusion glob is
+`improvements/IMPROVEMENT_3D_*_*_URBAN.png` — the **two** `*` wildcards
+between `IMPROVEMENT_3D_` and `_URBAN.png` are load-bearing. They match the
+per-(improvement, nation) composites this doc is about (e.g.
+`IMPROVEMENT_3D_LIBRARY_GREECE_URBAN.png`, two underscore-separated fields:
+`LIBRARY` and `GREECE`). They do **not** match the standalone per-nation
+urban-tile renders that this doc's predecessor work produced — those are
+`IMPROVEMENT_3D_<NATION>_URBAN.png` with only one underscore-separated field
+(e.g. `IMPROVEMENT_3D_GREECE_URBAN.png`). The 10 standalone urban tiles stay
+in the gallery; the 719 composites do not. The same wildcard pattern is used
+in the Re-rendering section above to delete only the composites, not the
+underlying tiles — same load-bearing distinction.
+
+If you ever wonder "why don't I see urban improvement composites in the local
+dev gallery?" — the answer is that the manifest filter applies in dev as well
+as prod (single source of truth, no env-flagged divergence), so the local
+SvelteKit app reflects the deployed set. To inspect a filtered composite,
+open the file directly from `extracted/sprites/improvements/`.

@@ -79,7 +79,22 @@ pinacotheca-deploy
 
 # Preview without pushing
 pinacotheca-deploy --dry-run
+
+# Skip oxipng compression pass
+pinacotheca-deploy --no-optimize
+
+# Emergency: deploy everything (likely exceeds Pages' 1 GB cap)
+pinacotheca-deploy --no-filter
 ```
+
+The deploy stages `extracted/` to a temp directory and applies a filter — large
+local-only assets (currently per-(improvement, nation) urban composites,
+~1.3 GB) are excluded so the site fits under GitHub Pages' 1 GB limit. The
+filter list lives in `src/pinacotheca/gallery_filter.py` and is also consumed
+by the SvelteKit manifest generator. Local `extracted/` is never modified.
+Requires `rsync` (preinstalled on macOS); `oxipng` is optional for additional
+compression (`brew install oxipng`). See "Gallery deploy filter" in `CLAUDE.md`
+for design details.
 
 ### Legacy HTML Gallery
 

@@ -5,8 +5,11 @@ Provides commands for extracting sprites, generating galleries, and deploying to
 """
 
 import argparse
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from pinacotheca.extractor import (
@@ -15,6 +18,7 @@ from pinacotheca.extractor import (
     extract_unit_meshes,
     extract_urban_composite_meshes,
 )
+from pinacotheca.gallery_filter import GALLERY_EXCLUDE_GLOBS, write_filter_sidecar
 
 
 def main() -> None:
@@ -81,6 +85,10 @@ Examples:
                 verbose=not args.quiet,
             )
 
+        sidecar = write_filter_sidecar(args.output)
+        if not args.quiet:
+            print(f"Wrote gallery filter sidecar: {sidecar}")
+
     except FileNotFoundError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
@@ -127,19 +135,96 @@ def gallery() -> None:
         sys.exit(1)
 
 
+def _dir_size_bytes(path: Path) -> int:
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def _file_count(path: Path) -> int:
+    return sum(1 for f in path.rglob("*") if f.is_file())
+
+
+def _format_bytes(n: int) -> str:
+    size = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} B"
+
+
+def _stage_with_filter(
+    source: Path, staging: Path, exclude_globs: list[str], *, verbose: bool = True
+) -> None:
+    """Mirror ``source/`` into ``staging/`` via rsync, omitting paths under
+    ``sprites/`` that match any glob in ``exclude_globs``.
+
+    Uses ``-aL --copy-unsafe-links`` to materialize symlinks (gh-pages can't
+    serve dangling links). xattrs aren't copied because ``-a`` on macOS and
+    GNU rsync defaults excludes them.
+    """
+    cmd = [
+        "rsync",
+        "-aL",
+        "--copy-unsafe-links",
+        "--delete",
+    ]
+    for glob in exclude_globs:
+        cmd.append(f"--exclude=sprites/{glob}")
+    cmd.append(f"{source}/")
+    cmd.append(f"{staging}/")
+    if verbose:
+        print(f"Staging via rsync ({len(exclude_globs)} exclude pattern(s))...")
+    subprocess.run(cmd, check=True)
+
+
+def _run_oxipng(directory: Path, *, verbose: bool = True) -> tuple[int, int]:
+    """Optimize PNGs under ``directory`` in place. Returns (before, after) bytes."""
+    before = _dir_size_bytes(directory)
+    threads = str(os.cpu_count() or 4)
+    # -o 2 (default) gives ~95% of -o 4's savings at <30% the wall time;
+    # benchmarked on these renders, -o 4 saves only 0.3 percentage points
+    # extra at 3x the runtime. Not worth it on a 4500-file deploy.
+    cmd = [
+        "oxipng",
+        "-o",
+        "2",
+        "--strip",
+        "safe",
+        "-t",
+        threads,
+        "-r",
+        "--preserve",
+        "-q",
+        str(directory),
+    ]
+    if verbose:
+        print(f"Running oxipng -o 2 on {directory} (-t {threads})...")
+    subprocess.run(cmd, check=True)
+    after = _dir_size_bytes(directory)
+    return before, after
+
+
 def deploy() -> None:
-    """Deploy gallery to GitHub Pages using ghp-import."""
+    """Deploy gallery to GitHub Pages using ghp-import.
+
+    Stages ``--output`` to a temp directory via ``rsync``, applying the gallery
+    filter (see ``src/pinacotheca/gallery_filter.py``) and optionally running
+    ``oxipng`` for additional compression, before handing the staged tree to
+    ``ghp-import``. Local ``extracted/`` is never modified.
+    """
     parser = argparse.ArgumentParser(
         description="Deploy gallery to GitHub Pages",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-This command uses ghp-import to push the extracted gallery to the gh-pages branch.
-GitHub Pages should be configured to serve from the gh-pages branch.
+This command stages ./extracted to a temp directory (filtering large local-only
+assets — see src/pinacotheca/gallery_filter.py), optionally compresses PNGs with
+oxipng, then uses ghp-import to push the staged tree to the gh-pages branch.
 
 Examples:
-  pinacotheca-deploy                    # Deploy ./extracted to gh-pages
-  pinacotheca-deploy -o ~/my-sprites    # Deploy custom directory
-  pinacotheca-deploy --dry-run          # Preview without pushing
+  pinacotheca-deploy                    # Filter + oxipng + push
+  pinacotheca-deploy --no-optimize      # Skip oxipng pass
+  pinacotheca-deploy --no-filter        # Emergency: deploy everything (over Pages cap!)
+  pinacotheca-deploy --dry-run          # Stage and report; don't push
         """,
     )
     parser.add_argument(
@@ -170,10 +255,20 @@ Examples:
         default="gh-pages",
         help="Branch to deploy to (default: gh-pages)",
     )
+    parser.add_argument(
+        "--no-optimize",
+        action="store_true",
+        help="Skip the oxipng compression pass on staged PNGs",
+    )
+    parser.add_argument(
+        "--no-filter",
+        action="store_true",
+        help="Emergency override: deploy everything, ignoring gallery_filter.py "
+        "(WARNING: likely exceeds GitHub Pages' 1 GB site limit)",
+    )
 
     args = parser.parse_args()
 
-    # Verify directory exists and has content
     if not args.output.exists():
         print(f"ERROR: Directory not found: {args.output}", file=sys.stderr)
         sys.exit(1)
@@ -189,44 +284,123 @@ Examples:
         print(f"ERROR: No sprites/ directory found in {args.output}", file=sys.stderr)
         sys.exit(1)
 
-    # Count files
-    sprite_count = sum(1 for _ in sprites_dir.rglob("*.png"))
-    print(f"Deploying gallery with {sprite_count:,} sprites...")
-
-    if args.dry_run:
-        print(f"\nDry run - would deploy {args.output} to branch '{args.branch}'")
-        print("Files that would be deployed:")
-        for f in sorted(args.output.rglob("*"))[:20]:
-            if f.is_file():
-                print(f"  {f.relative_to(args.output)}")
-        print("  ...")
-        return
-
-    # Run ghp-import
-    cmd = [
-        "ghp-import",
-        "-n",  # Include .nojekyll
-        "-p",  # Push after import
-        "-f",  # Force push
-        "-b",
-        args.branch,
-        "-m",
-        args.message,
-        str(args.output),
-    ]
-
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print(f"Successfully deployed to '{args.branch}' branch!")
-        print("\nYour gallery should be available at:")
-        print("  https://<username>.github.io/<repo>/")
-    except FileNotFoundError:
-        print("ERROR: ghp-import not found.", file=sys.stderr)
-        print("Install with: pip install ghp-import", file=sys.stderr)
+    sidecar = args.output / ".gallery-filter.json"
+    if not sidecar.exists():
+        print(f"ERROR: {sidecar} not found.", file=sys.stderr)
+        print(
+            "Run `pinacotheca` first to generate it (the SvelteKit manifest reads it too).",
+            file=sys.stderr,
+        )
         sys.exit(1)
-    except subprocess.CalledProcessError as e:
-        print(f"ERROR: ghp-import failed: {e.stderr}", file=sys.stderr)
+
+    if args.no_filter:
+        print("WARNING: --no-filter is set. Deploying every file in --output.")
+        print("         This will likely exceed GitHub Pages' 1 GB site limit.")
+        excludes: list[str] = []
+    else:
+        excludes = list(GALLERY_EXCLUDE_GLOBS)
+
+    if shutil.which("rsync") is None:
+        print("ERROR: rsync not found on PATH.", file=sys.stderr)
+        print("rsync is preinstalled on macOS and most Linux distros.", file=sys.stderr)
         sys.exit(1)
+
+    pre_size = _dir_size_bytes(args.output)
+    pre_count = _file_count(args.output)
+    print(f"Source: {args.output}  ({pre_count:,} files, {_format_bytes(pre_size)})")
+
+    with tempfile.TemporaryDirectory(prefix="pinacotheca-deploy-") as staging_str:
+        staging = Path(staging_str)
+
+        try:
+            _stage_with_filter(args.output, staging, excludes, verbose=True)
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: rsync failed (exit {e.returncode})", file=sys.stderr)
+            sys.exit(1)
+
+        staged_size = _dir_size_bytes(staging)
+        staged_count = _file_count(staging)
+        if excludes:
+            excluded_count = pre_count - staged_count
+            excluded_bytes = pre_size - staged_size
+            if excluded_count == 0:
+                print(
+                    f"  Filter patterns matched 0 files (already absent or filter is current): "
+                    f"{', '.join(excludes)}"
+                )
+            else:
+                print(
+                    f"  Filter excluded {excluded_count:,} files "
+                    f"({_format_bytes(excluded_bytes)}): {', '.join(excludes)}"
+                )
+
+        if not args.no_optimize:
+            if shutil.which("oxipng") is None:
+                print(
+                    "  oxipng not found — skipping compression. "
+                    "Install with: brew install oxipng (macOS)"
+                )
+            else:
+                try:
+                    before, after = _run_oxipng(staging / "sprites", verbose=True)
+                    saved = before - after
+                    pct = (saved / before * 100.0) if before else 0.0
+                    print(
+                        f"  oxipng saved {_format_bytes(saved)} "
+                        f"({pct:.1f}% across {staging / 'sprites'})"
+                    )
+                except subprocess.CalledProcessError as e:
+                    print(
+                        f"  WARNING: oxipng failed (exit {e.returncode}); "
+                        "continuing with uncompressed PNGs",
+                        file=sys.stderr,
+                    )
+
+        final_size = _dir_size_bytes(staging)
+        final_count = _file_count(staging)
+        cap_bytes = 1024 * 1024 * 1024  # GitHub Pages' 1 GB site limit
+        cap_pct = final_size / cap_bytes * 100.0
+        print(
+            f"\nStaged: {final_count:,} files, {_format_bytes(final_size)} "
+            f"({cap_pct:.1f}% of GitHub Pages' 1 GB site limit)"
+        )
+        if final_size > cap_bytes:
+            print(
+                "WARNING: staged size exceeds 1 GB. GitHub Pages may refuse to publish.",
+                file=sys.stderr,
+            )
+
+        if args.dry_run:
+            print(f"\nDry run — would deploy {staging} to branch '{args.branch}'")
+            print("Sample files that would be deployed:")
+            for f in sorted(staging.rglob("*"))[:20]:
+                if f.is_file():
+                    print(f"  {f.relative_to(staging)}")
+            return
+
+        cmd = [
+            "ghp-import",
+            "-n",  # Include .nojekyll
+            "-p",  # Push after import
+            "-f",  # Force push
+            "-b",
+            args.branch,
+            "-m",
+            args.message,
+            str(staging),
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            print(f"\nSuccessfully deployed to '{args.branch}' branch!")
+            print("Your gallery should be available at:")
+            print("  https://<username>.github.io/<repo>/")
+        except FileNotFoundError:
+            print("ERROR: ghp-import not found.", file=sys.stderr)
+            print("Install with: pip install ghp-import", file=sys.stderr)
+            sys.exit(1)
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: ghp-import failed: {e.stderr}", file=sys.stderr)
+            sys.exit(1)
 
 
 def _find_web_dir() -> Path:
@@ -297,6 +471,13 @@ def web_build() -> None:
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # The SvelteKit static adapter wipes extracted/ before writing its build
+    # output, which deletes any sidecar pinacotheca wrote. Write it both
+    # before (so `npm run manifest` can read it) and after (so deploy() can).
+    extracted_dir = web_dir.parent / "extracted"
+    if (extracted_dir / "sprites").exists():
+        write_filter_sidecar(extracted_dir)
+
     try:
         subprocess.run(["npm", "run", "build"], cwd=web_dir, check=True)
     except FileNotFoundError:
@@ -304,6 +485,10 @@ def web_build() -> None:
         sys.exit(1)
     except subprocess.CalledProcessError as e:
         sys.exit(e.returncode)
+
+    if extracted_dir.exists():
+        sidecar = write_filter_sidecar(extracted_dir)
+        print(f"Restored gallery filter sidecar: {sidecar}")
 
 
 def atlas() -> None:
