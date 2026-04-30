@@ -227,6 +227,19 @@ def test_layer_order_biome_then_pvt_sorted_then_buildings(monkeypatch) -> None:
     assert meta.composition == "layered"
     np.testing.assert_array_equal(np.asarray(meta.world.bbox_min), first[0])
     np.testing.assert_array_equal(np.asarray(meta.world.bbox_max), first[1])
+    # `world.ground_hex` exposes the biome's bbox separately from the
+    # shared union bbox so consumers can anchor a hex-clip region to the
+    # ground footprint instead of cover-fitting the whole PNG.
+    assert meta.world.ground_hex is not None
+    gh_min = np.asarray(meta.world.ground_hex.bbox_min)
+    gh_max = np.asarray(meta.world.ground_hex.bbox_max)
+    shared_min = np.asarray(meta.world.bbox_min)
+    shared_max = np.asarray(meta.world.bbox_max)
+    assert np.all(gh_min >= shared_min)
+    assert np.all(gh_max <= shared_max)
+    # PVT + buildings extend the shared bbox beyond the biome on at least
+    # one axis, so the ground hex is strictly smaller in some dimension.
+    assert np.any((gh_max - gh_min) < (shared_max - shared_min))
 
 
 def test_empty_pvt_planes_renders_biome_plus_buildings(monkeypatch) -> None:

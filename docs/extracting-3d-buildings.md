@@ -303,7 +303,8 @@ Schema (`version: 1`):
   "world": {
     "maxExtent": 1.84,
     "bboxMin": [-0.92, 0.0, -0.92],
-    "bboxMax": [0.92, 1.5, 0.92]
+    "bboxMax": [0.92, 1.5, 0.92],
+    "groundHex": null
   },
   "framing": {
     "projection": "orthographic",
@@ -327,6 +328,7 @@ Field semantics:
 - `composition`: `"prefab"` for standalone improvements / resources / units (per-prefab tight bbox); `"layered"` for capitals, urbans, generic-city (`IMPROVEMENT_3D_CITY*.png`), and per-(improvement, nation) urban composites — the bbox covers the *whole* composited scene (biome ∪ PVT ∪ buildings), so per-ankh should not relative-scale layered outputs against per-prefab ones.
 - `world.maxExtent`: the value the renderer also feeds into `distance = max_extent * 1.6` and `half_w = max_extent * 0.66`. Primary signal for relative scaling: `R.maxExtent / I.maxExtent`.
 - `world.bboxMin/Max`: full Unity-world bbox for non-uniform scaling (e.g. when two prefabs share a maxExtent but differ in aspect).
+- `world.groundHex` *(layered renders only; `null` for prefab)*: world-space bbox of the hex-shaped ground plane (biome + PVT, scaled per-render to fit the buildings/PVT footprint). The mesh is a quad whose visual hex outline comes from `Hex_Mask` alpha — this is the underlying quad's axis-aligned extent, suitable for anchoring a hex-clip region. Use this to align the ground footprint to a hex cell instead of cover-fitting the whole PNG: a tall building (cathedral, ziggurat) then overflows above the cell rather than getting forced into it. Convert to pixel coords via `(world - world.bboxMin) / render.worldUnitsPerOutputPixel`.
 - `framing`: bookkeeping. `frustumHalfSize` is set for orthographic (improvements / resources / layered); `fovDeg` for perspective (units). The unused field is `null`.
 - `render.worldUnitsPerOutputPixel`: load-bearing for absolute pixel placement on a tile. Accounts for both the autocrop and the LANCZOS upscale `autocrop_with_padding` applies when content is < 256px on both axes — consumers should use this scalar directly rather than re-deriving from `frustumHalfSize` and `preCropWidthPx`, which would miss the upscale correction.
 

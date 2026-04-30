@@ -35,12 +35,27 @@ Projection = Literal["orthographic", "perspective"]
 
 
 @dataclass(frozen=True)
+class GroundHexBounds:
+    """World-space bbox of the layered hex ground plane (biome + PVT).
+
+    Present only on layered renders. The mesh is a quad whose visual hex
+    shape comes from the ``Hex_Mask`` alpha — this bbox is the underlying
+    quad's axis-aligned extent, which is what consumers anchor a
+    hex-clip region to. ``None`` on prefab renders.
+    """
+
+    bbox_min: tuple[float, float, float]
+    bbox_max: tuple[float, float, float]
+
+
+@dataclass(frozen=True)
 class WorldBounds:
     """World-space bbox of the rendered geometry, in Unity world units."""
 
     max_extent: float
     bbox_min: tuple[float, float, float]
     bbox_max: tuple[float, float, float]
+    ground_hex: GroundHexBounds | None = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +112,14 @@ class RenderMetadata:
                 "maxExtent": self.world.max_extent,
                 "bboxMin": list(self.world.bbox_min),
                 "bboxMax": list(self.world.bbox_max),
+                "groundHex": (
+                    None
+                    if self.world.ground_hex is None
+                    else {
+                        "bboxMin": list(self.world.ground_hex.bbox_min),
+                        "bboxMax": list(self.world.ground_hex.bbox_max),
+                    }
+                ),
             },
             "framing": {
                 "projection": self.framing.projection,

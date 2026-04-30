@@ -39,6 +39,7 @@ from pinacotheca.prefab import (
 from pinacotheca.pvt_splats import PvtPlanePart, compose_pvt_texture
 from pinacotheca.render_metadata import (
     SCHEMA_VERSION,
+    GroundHexBounds,
     RenderInfo,
     RenderMetadata,
     WorldBounds,
@@ -228,10 +229,19 @@ def render_layered_ground(
         biome_obj = biome_obj_orig
 
     # --- Compute the shared bbox in baked render space across all layers.
+    #     Capture the biome bbox separately for the layered sidecar's
+    #     `world.groundHex` field so consumers can anchor a hex-clip region
+    #     to the ground footprint instead of cover-fitting the whole PNG.
     bboxes: list[tuple[NDArray[np.float64], NDArray[np.float64]]] = []
-    bb = _bbox_of_obj(biome_obj)
-    if bb is not None:
-        bboxes.append(bb)
+    biome_bbox = _bbox_of_obj(biome_obj)
+    ground_hex_bounds: GroundHexBounds | None = None
+    if biome_bbox is not None:
+        bboxes.append(biome_bbox)
+        bmin, bmax = biome_bbox
+        ground_hex_bounds = GroundHexBounds(
+            bbox_min=(float(bmin[0]), float(bmin[1]), float(bmin[2])),
+            bbox_max=(float(bmax[0]), float(bmax[1]), float(bmax[2])),
+        )
     bboxes.extend(target_bboxes)
 
     if not bboxes:
@@ -316,6 +326,7 @@ def render_layered_ground(
             max_extent=float(shared_extent.max()),
             bbox_min=(float(shared_min[0]), float(shared_min[1]), float(shared_min[2])),
             bbox_max=(float(shared_max[0]), float(shared_max[1]), float(shared_max[2])),
+            ground_hex=ground_hex_bounds,
         ),
         framing=layer_metadata.framing,
         render=RenderInfo(

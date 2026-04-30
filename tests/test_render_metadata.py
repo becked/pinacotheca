@@ -11,6 +11,7 @@ import pytest
 from pinacotheca.render_metadata import (
     SCHEMA_VERSION,
     FramingInfo,
+    GroundHexBounds,
     RenderInfo,
     RenderMetadata,
     WorldBounds,
@@ -52,7 +53,7 @@ class TestToJsonDict:
         # Top-level keys
         assert set(d.keys()) == {"version", "composition", "world", "framing", "render"}
         # World subkeys are camelCase, not snake_case
-        assert set(d["world"].keys()) == {"maxExtent", "bboxMin", "bboxMax"}
+        assert set(d["world"].keys()) == {"maxExtent", "bboxMin", "bboxMax", "groundHex"}
         assert set(d["framing"].keys()) == {
             "projection",
             "tiltDeg",
@@ -113,6 +114,48 @@ class TestToJsonDict:
         # If this fails on a content change you've forgotten to bump
         # SCHEMA_VERSION; both must move together when the contract breaks.
         assert SCHEMA_VERSION == 1
+
+    def test_ground_hex_null_when_absent(self) -> None:
+        meta = _ortho_metadata()
+        d = meta.to_json_dict()
+        # Default WorldBounds has no ground_hex — emit null, not omit.
+        assert d["world"]["groundHex"] is None
+
+    def test_ground_hex_serialized_under_world(self) -> None:
+        meta = RenderMetadata(
+            version=SCHEMA_VERSION,
+            composition="layered",
+            world=WorldBounds(
+                max_extent=4.0,
+                bbox_min=(-2.0, 0.0, -2.0),
+                bbox_max=(2.0, 3.5, 2.0),
+                ground_hex=GroundHexBounds(
+                    bbox_min=(-1.5, 0.0, -1.3),
+                    bbox_max=(1.5, 0.0, 1.3),
+                ),
+            ),
+            framing=FramingInfo(
+                projection="orthographic",
+                tilt_deg=30.0,
+                distance=6.4,
+                frustum_half_size=2.64,
+                fov_deg=None,
+            ),
+            render=RenderInfo(
+                pre_crop_width_px=2048,
+                pre_crop_height_px=2048,
+                output_width_px=512,
+                output_height_px=512,
+                world_units_per_output_pixel=0.0103,
+            ),
+        )
+        d = meta.to_json_dict()
+        gh = d["world"]["groundHex"]
+        assert isinstance(gh, dict)
+        assert set(gh.keys()) == {"bboxMin", "bboxMax"}
+        assert gh["bboxMin"] == [-1.5, 0.0, -1.3]
+        assert gh["bboxMax"] == [1.5, 0.0, 1.3]
+        assert isinstance(gh["bboxMin"], list)
 
 
 class TestWithers:
