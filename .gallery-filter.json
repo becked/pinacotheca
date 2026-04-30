@@ -1,0 +1,7 @@
+{
+  "generatedAt": "2026-04-30T12:38:52.219485+00:00",
+  "excludeGlobs": [
+    "improvements/IMPROVEMENT_3D_*_*_URBAN.png"
+  ],
+  "reason": "Per-(improvement, nation) urban composites \u2014 used by per-ankh's atlas renderer (sister tool) but excluded from the gh-pages gallery deploy because they push the site over GitHub Pages' 1 GB limit."
+}
