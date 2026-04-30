@@ -31,7 +31,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from PIL import Image
 
 from pinacotheca.clutter_transforms import TERRAIN_CLUTTER_TYPE_NONE
 from pinacotheca.prefab import PrefabPart
@@ -179,7 +178,7 @@ def cull_clutter_against_masks(
         if img is None:
             continue
         try:
-            inv = np.linalg.inv(plane.world_matrix)
+            inv = np.linalg.inv(plane.world_matrix).astype(np.float64)
         except np.linalg.LinAlgError:
             logger.warning(
                 "TerrainClutterSplat %r world matrix is singular; skipping",

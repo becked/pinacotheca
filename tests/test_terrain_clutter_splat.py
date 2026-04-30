@@ -12,6 +12,7 @@ import pytest
 from PIL import Image
 
 from pinacotheca.terrain_clutter_splat import (
+    ClutterMaskPart,
     TerrainClutterSplatFields,
     compose_clutter_mask_texture,
     parse_terrain_clutter_splat,
@@ -108,7 +109,7 @@ def test_byte_budget_mismatch_raises() -> None:
 def test_short_body_raises() -> None:
     """Body shorter than expected (e.g. a removed field) must also fail."""
     raw = _build_clutter_splat_bytes()
-    truncated = raw[: -4]  # drop trailing tiling float
+    truncated = raw[:-4]  # drop trailing tiling float
     with pytest.raises((ValueError, IndexError, struct.error)):
         parse_terrain_clutter_splat(truncated)
 
@@ -155,10 +156,9 @@ def _make_part(
     clear_trees: bool = False,
     clear_minor: bool = True,
     clear_major: bool = False,
-) -> "ClutterMaskPart":  # type: ignore[name-defined]
+) -> ClutterMaskPart:
     """Build a ClutterMaskPart with parsed-only fields filled in."""
     from pinacotheca.clutter_transforms import PPtr
-    from pinacotheca.terrain_clutter_splat import ClutterMaskPart
 
     parsed = TerrainClutterSplatFields(
         sorting_offset=0,
@@ -204,12 +204,15 @@ def test_compose_writes_only_flagged_channels(monkeypatch: pytest.MonkeyPatch) -
     src_arr[..., 2] = 200  # B channel
     src_img = Image.fromarray(src_arr, mode="RGBA")
 
-    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda env, p: _StubReader(src_img))
+    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda _env, _p: _StubReader(src_img))
     monkeypatch.setattr(mod, "_decode_texture", lambda obj: obj)
 
     part = _make_part(
-        channel=2, intensity=1.0,
-        clear_trees=False, clear_minor=True, clear_major=False,
+        channel=2,
+        intensity=1.0,
+        clear_trees=False,
+        clear_minor=True,
+        clear_major=False,
     )
     out = compose_clutter_mask_texture(env=None, plane=part)
     assert out is not None
@@ -227,11 +230,15 @@ def test_compose_intensity_scales_value(monkeypatch: pytest.MonkeyPatch) -> None
     src_arr = np.zeros((2, 2, 4), dtype=np.uint8)
     src_arr[..., 0] = 100  # R channel
     src_img = Image.fromarray(src_arr, mode="RGBA")
-    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda env, p: _StubReader(src_img))
+    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda _env, _p: _StubReader(src_img))
     monkeypatch.setattr(mod, "_decode_texture", lambda obj: obj)
 
     part = _make_part(
-        channel=0, intensity=0.5, clear_trees=True, clear_minor=False, clear_major=False,
+        channel=0,
+        intensity=0.5,
+        clear_trees=True,
+        clear_minor=False,
+        clear_major=False,
     )
     out = compose_clutter_mask_texture(env=None, plane=part)
     assert out is not None
@@ -247,11 +254,15 @@ def test_compose_clamps_when_intensity_pushes_past_255(monkeypatch: pytest.Monke
     src_arr = np.zeros((2, 2, 4), dtype=np.uint8)
     src_arr[..., 0] = 200
     src_img = Image.fromarray(src_arr, mode="RGBA")
-    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda env, p: _StubReader(src_img))
+    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda _env, _p: _StubReader(src_img))
     monkeypatch.setattr(mod, "_decode_texture", lambda obj: obj)
 
     part = _make_part(
-        channel=0, intensity=2.0, clear_trees=True, clear_minor=False, clear_major=False,
+        channel=0,
+        intensity=2.0,
+        clear_trees=True,
+        clear_minor=False,
+        clear_major=False,
     )
     out = compose_clutter_mask_texture(env=None, plane=part)
     assert out is not None

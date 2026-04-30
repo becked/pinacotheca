@@ -357,7 +357,7 @@ def test_clutter_type_falls_back_to_parent_when_override_is_none(
     ClutterTransformsBackgroundData.AddModel."""
     from pinacotheca import clutter_transforms as mod
 
-    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda env, pptr: _FakeMeshReader())
+    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda _env, _pptr: _FakeMeshReader())
 
     inst = ClutterInstance(True, (0, 0, 0), (0, 0, 0), (1, 1, 1))
     model = ClutterModel(
@@ -387,7 +387,7 @@ def test_clutter_type_uses_per_model_override_when_set(
     """Per-model override (not -1) wins over the parent's clutter_type."""
     from pinacotheca import clutter_transforms as mod
 
-    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda env, pptr: _FakeMeshReader())
+    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda _env, _pptr: _FakeMeshReader())
 
     inst = ClutterInstance(True, (0, 0, 0), (0, 0, 0), (1, 1, 1))
     model_override_trees = ClutterModel(
@@ -432,7 +432,7 @@ def test_clutter_to_prefab_parts_returns_same_world_matrices_as_with_type(
     so capital/urban/resource paths remain bit-equivalent to before."""
     from pinacotheca import clutter_transforms as mod
 
-    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda env, pptr: _FakeMeshReader())
+    monkeypatch.setattr(mod, "_resolve_pptr_to_reader", lambda _env, _pptr: _FakeMeshReader())
 
     model = ClutterModel(
         initialized=True,
@@ -453,7 +453,9 @@ def test_clutter_to_prefab_parts_returns_same_world_matrices_as_with_type(
     parsed = _make_parsed(clutter_type=0, models=(model,))
 
     parts_legacy = mod.clutter_to_prefab_parts(env=None, parsed=parsed, parent_world=np.eye(4))
-    parts_typed = mod.clutter_to_prefab_parts_with_type(env=None, parsed=parsed, parent_world=np.eye(4))
+    parts_typed = mod.clutter_to_prefab_parts_with_type(
+        env=None, parsed=parsed, parent_world=np.eye(4)
+    )
     assert len(parts_legacy) == len(parts_typed) == 2
-    for legacy_part, (typed_part, _) in zip(parts_legacy, parts_typed):
+    for legacy_part, (typed_part, _) in zip(parts_legacy, parts_typed, strict=True):
         np.testing.assert_array_equal(legacy_part.world_matrix, typed_part.world_matrix)

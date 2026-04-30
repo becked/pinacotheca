@@ -518,9 +518,7 @@ def _is_urban_renderable(
         if targets and not any(t in urban_compatible_targets for t in targets):
             return False
     gate = _entry_text(entry, "GameContentRequired")
-    if gate is not None and gate.startswith("EVENTPACK_"):
-        return False
-    return True
+    return gate is None or not gate.startswith("EVENTPACK_")
 
 
 def _resolve_nation_lock(entry: ET.Element) -> str | None:

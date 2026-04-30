@@ -594,9 +594,7 @@ PREFAB_DECODE_BLACKLIST: frozenset[str] = frozenset(
 # buildings, stockade ring with gaps between hovels), and per-ankh does not
 # draw terrain underneath these tiles either, so the painted ground has to
 # live in the PNG.
-GENERIC_LAYERED_Z_ICONS: frozenset[str] = frozenset(
-    {"IMPROVEMENT_CITY", "IMPROVEMENT_CITY_SITE"}
-)
+GENERIC_LAYERED_Z_ICONS: frozenset[str] = frozenset({"IMPROVEMENT_CITY", "IMPROVEMENT_CITY_SITE"})
 
 
 def _classify_immediate_children(
@@ -1575,7 +1573,9 @@ def extract_urban_composite_meshes(
             root = find_root_gameobject(env, urban_prefab_name)
             if root is None:
                 if verbose:
-                    print(f"  [WARN] Urban prefab not found for {nation_key}: {urban_prefab_name!r}")
+                    print(
+                        f"  [WARN] Urban prefab not found for {nation_key}: {urban_prefab_name!r}"
+                    )
                 continue
             mesh_parts = drop_splat_meshes(
                 [p for p in walk_prefab(root) if not _is_lower_lod_part(p)]

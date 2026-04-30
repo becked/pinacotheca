@@ -11,13 +11,12 @@ from pinacotheca.clutter_culling import (
     RandomStruct,
     cull_clutter_against_masks,
 )
-from pinacotheca.clutter_transforms import PPtr, TERRAIN_CLUTTER_TYPE_NONE
+from pinacotheca.clutter_transforms import TERRAIN_CLUTTER_TYPE_NONE, PPtr
 from pinacotheca.prefab import PrefabPart
 from pinacotheca.terrain_clutter_splat import (
     ClutterMaskPart,
     TerrainClutterSplatFields,
 )
-
 
 # ============================================================
 # RandomStruct
@@ -140,7 +139,7 @@ def test_cull_with_none_clutter_type_never_drops(monkeypatch: pytest.MonkeyPatch
     # Compose returns a mask that's max in all channels everywhere, which would
     # cull any masked instance. Instances with type=None should still survive.
     full_mask = Image.fromarray(np.full((4, 4, 3), 255, dtype=np.uint8), mode="RGB")
-    monkeypatch.setattr(mod, "compose_clutter_mask_texture", lambda env, p: full_mask)
+    monkeypatch.setattr(mod, "compose_clutter_mask_texture", lambda _env, _p: full_mask)
 
     parts = [(_make_part(0.0, 0.0), TERRAIN_CLUTTER_TYPE_NONE)] * 5
     plane = _make_mask_plane()
@@ -156,7 +155,7 @@ def test_cull_drops_instance_inside_full_mask_with_matching_channel(
     from pinacotheca import clutter_culling as mod
 
     full_mask = Image.fromarray(np.full((4, 4, 3), 255, dtype=np.uint8), mode="RGB")
-    monkeypatch.setattr(mod, "compose_clutter_mask_texture", lambda env, p: full_mask)
+    monkeypatch.setattr(mod, "compose_clutter_mask_texture", lambda _env, _p: full_mask)
 
     # Place 10 trees (type 0) at the plane center (world 0,0,0); plane is
     # identity so they project to UV (0.5, 0.5) which is inside the mask.
@@ -172,7 +171,7 @@ def test_cull_keeps_instance_outside_mask_uv(monkeypatch: pytest.MonkeyPatch) ->
     from pinacotheca import clutter_culling as mod
 
     full_mask = Image.fromarray(np.full((4, 4, 3), 255, dtype=np.uint8), mode="RGB")
-    monkeypatch.setattr(mod, "compose_clutter_mask_texture", lambda env, p: full_mask)
+    monkeypatch.setattr(mod, "compose_clutter_mask_texture", lambda _env, _p: full_mask)
 
     # Identity plane has local XZ in [-5, +5]. Place an instance at world
     # (50, 0, 50) — well outside that range.
@@ -191,7 +190,9 @@ def test_cull_drops_only_when_mask_value_exceeds_random(
     from pinacotheca import clutter_culling as mod
 
     half = np.full((4, 4, 3), 128, dtype=np.uint8)  # ≈ 0.502 in [0, 1]
-    monkeypatch.setattr(mod, "compose_clutter_mask_texture", lambda env, p: Image.fromarray(half, mode="RGB"))
+    monkeypatch.setattr(
+        mod, "compose_clutter_mask_texture", lambda _env, _p: Image.fromarray(half, mode="RGB")
+    )
 
     # 1000 minor-building instances all at origin.
     parts = [(_make_part(0.0, 0.0), 1) for _ in range(1000)]
@@ -210,7 +211,7 @@ def test_cull_combines_overlapping_planes_via_max(monkeypatch: pytest.MonkeyPatc
     strong = Image.fromarray(np.full((4, 4, 3), 255, dtype=np.uint8), mode="RGB")  # 1.0
 
     images = iter([weak, strong])
-    monkeypatch.setattr(mod, "compose_clutter_mask_texture", lambda env, p: next(images))
+    monkeypatch.setattr(mod, "compose_clutter_mask_texture", lambda _env, _p: next(images))
 
     # Two planes both at identity, both covering origin.
     plane_a = _make_mask_plane()
@@ -228,7 +229,9 @@ def test_cull_is_deterministic_across_runs(monkeypatch: pytest.MonkeyPatch) -> N
     from pinacotheca import clutter_culling as mod
 
     half = np.full((4, 4, 3), 128, dtype=np.uint8)
-    monkeypatch.setattr(mod, "compose_clutter_mask_texture", lambda env, p: Image.fromarray(half, mode="RGB"))
+    monkeypatch.setattr(
+        mod, "compose_clutter_mask_texture", lambda _env, _p: Image.fromarray(half, mode="RGB")
+    )
 
     parts = [(_make_part(0.0, 0.0), 1) for _ in range(500)]
     plane = _make_mask_plane()
