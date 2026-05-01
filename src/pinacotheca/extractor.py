@@ -1717,3 +1717,133 @@ def extract_urban_composite_meshes(
 
     finally:
         os.chdir(original_cwd)
+
+
+def extract_terrain_tiles(
+    *,
+    game_data: Path | None = None,
+    output_dir: Path | None = None,
+    verbose: bool = True,
+) -> dict[str, int]:
+    """Render every (biome × height) terrain tile to its own PNG.
+
+    Walks ``terrain_index.load_terrain_tiles`` for the canonical 28-tile
+    set (6 land biomes × 4 heights + URBAN_FLAT + 3 water variants) and
+    delegates each render to ``terrain_render.render_terrain_tile``. Each
+    output is a layered composite: flat biome ground underneath, the
+    feature prefab's PVT plane on top (tessellated and displaced via
+    ``TerrainHeightSplat`` for HILL/MOUNTAIN/VOLCANO).
+
+    Output goes to ``extracted/sprites/terrains/TERRAIN_3D_<BIOME>_<HEIGHT>.png``
+    (the ``terrains`` category already exists for 2D terrain icons; this
+    adds the 3D ones to the same directory). Each PNG ships with a
+    ``.json`` sidecar tagged ``composition="layered"``.
+
+    Returns ``{"rendered", "skipped", "errors"}`` counts.
+    """
+    try:
+        import UnityPy
+    except ImportError as e:
+        if verbose:
+            print(f"WARNING: 3D rendering not available ({e})", file=sys.stderr)
+        return {"rendered": 0, "skipped": 0, "errors": 0}
+
+    from pinacotheca.render_metadata import write_sidecar
+    from pinacotheca.terrain_index import load_terrain_tiles
+    from pinacotheca.terrain_render import render_terrain_tile
+
+    if game_data is None:
+        game_data = find_game_data()
+    if game_data is None or not game_data.exists():
+        raise FileNotFoundError("Could not find Old World game data!")
+    if output_dir is None:
+        output_dir = Path.cwd() / "extracted"
+
+    terrains_dir = output_dir / "sprites" / "terrains"
+    terrains_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve XML chain root (same walk-up as extract_improvement_meshes).
+    xml_dir: Path | None = None
+    for ancestor in [game_data, *game_data.parents]:
+        candidate = ancestor / "Reference" / "XML" / "Infos"
+        if candidate.is_dir():
+            xml_dir = candidate
+            break
+    if xml_dir is None:
+        raise FileNotFoundError(f"Could not locate Reference/XML/Infos starting from {game_data}")
+
+    tiles = load_terrain_tiles(xml_dir)
+    canonical_pngs = {f"{tile.output_name}.png" for tile in tiles}
+
+    # Auto-cleanup stale TERRAIN_3D_*.png files from prior runs that no
+    # longer match the canonical set (e.g. if the chain shrinks across a
+    # patch). Match what the other extractors do.
+    if terrains_dir.exists():
+        for f in terrains_dir.iterdir():
+            if not f.is_file():
+                continue
+            if not f.name.startswith("TERRAIN_3D_"):
+                continue  # leave 2D terrain icons alone
+            if f.suffix == ".json":
+                if (f.stem + ".png") not in canonical_pngs:
+                    f.unlink()
+                    if verbose:
+                        print(f"  Removed stale sidecar: {f.name}")
+                continue
+            if f.suffix == ".png" and f.name not in canonical_pngs:
+                f.unlink()
+                if verbose:
+                    print(f"  Removed stale render: {f.name}")
+
+    if verbose:
+        print("\n" + "=" * 60)
+        print("3D Terrain Tile Extraction")
+        print("=" * 60)
+        print(f"Discovered {len(tiles)} (biome × height) tiles via XML chain")
+
+    original_cwd = os.getcwd()
+    os.chdir(str(game_data))
+
+    rendered = 0
+    skipped_exists = 0
+    errors = 0
+
+    try:
+        if verbose:
+            print("Loading Unity assets...")
+        env = UnityPy.Environment()
+        env.load_file(str(game_data / "globalgamemanagers.assets"))
+        env.load_file(str(game_data / "resources.assets"))
+
+        for tile in tiles:
+            out_path = terrains_dir / f"{tile.output_name}.png"
+            if out_path.exists():
+                skipped_exists += 1
+                continue
+            try:
+                img, meta = render_terrain_tile(env, tile)
+                img.save(out_path, optimize=False)
+                write_sidecar(out_path, meta)
+                rendered += 1
+                if verbose:
+                    print(f"  [OK] {out_path.name} ({img.size[0]}x{img.size[1]})")
+                del img
+                gc.collect()
+            except Exception as e:
+                if verbose:
+                    print(f"  [ERROR] {out_path.name}: {e}")
+                errors += 1
+
+        if verbose:
+            print("\n" + "=" * 60)
+            print("3D TERRAIN EXTRACTION COMPLETE")
+            print("=" * 60)
+            print(f"Rendered: {rendered}")
+            print(f"Skipped (exists): {skipped_exists}")
+            print(f"Errors: {errors}")
+            print(f"Output: {terrains_dir}")
+
+        return {"rendered": rendered, "skipped": skipped_exists, "errors": errors}
+
+    finally:
+        os.chdir(original_cwd)

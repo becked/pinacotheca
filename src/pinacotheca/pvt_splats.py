@@ -319,7 +319,85 @@ def find_pvt_splats_in_prefab(root_go: Any) -> list[PvtPlanePart]:
 # ============================================================
 
 
-def compose_pvt_texture(env: Any, plane: PvtPlanePart) -> Image.Image | None:
+_HEX_MASK_CACHE: Image.Image | None = None
+
+# Procedural hex mask resolution. Big enough to anti-alias cleanly when
+# projected through the renderer's 45°-tilt camera onto a ~15-unit world
+# quad; small enough to compose quickly. Asset Hex_Mask is 512×512 — we
+# use 1024 for slightly crisper edges in the output.
+_HEX_MASK_SIZE = 1024
+
+
+def _generate_hex_mask(size: int = _HEX_MASK_SIZE) -> Image.Image:
+    """Generate a point-up regular hexagon mask in numpy.
+
+    Returns an "L"-mode PIL image with white interior, black exterior,
+    and ~1px of anti-aliasing on the boundary. Hex is inscribed in the
+    square texture: vertical extent (vertex-to-vertex) fills the height;
+    horizontal extent (apothem-to-apothem) is √3/2 ≈ 0.866 of the width.
+    Used in place of the asset bundle's authored ``Hex_Mask`` texture,
+    which has ~30 px of soft falloff baked in (designed for runtime
+    blending into neighboring tile splats — not what we want for a
+    standalone tile icon).
+
+    A point-up hex (vertex at top/bottom, flat sides on left/right) at
+    circumradius R has 3 unique edge-normal directions; a point is inside
+    iff its absolute projection onto each is ≤ apothem (R·cos 30° = √3/2).
+    """
+    # Coordinate grid centered at origin; image rows are inverted vs world
+    # but the hex is symmetric so it doesn't matter. Range: [-1, 1] on
+    # both axes so circumradius R = 1.
+    coord = np.linspace(-1.0, 1.0, size, dtype=np.float64)
+    y, x = np.meshgrid(coord, coord, indexing="ij")
+
+    # Three unique edge-normal directions (the other three are antipodes;
+    # taking abs() of the projection collapses the pair):
+    #   n0 = (1, 0)              — left/right edges
+    #   n1 = (1/2,  √3/2)        — upper-right / lower-left edges
+    #   n2 = (-1/2, √3/2)        — upper-left / lower-right edges
+    sqrt3_2 = np.sqrt(3.0) / 2.0
+    p0 = np.abs(x)
+    p1 = np.abs(0.5 * x + sqrt3_2 * y)
+    p2 = np.abs(-0.5 * x + sqrt3_2 * y)
+    max_proj = np.maximum(np.maximum(p0, p1), p2)
+
+    apothem = sqrt3_2  # = R · cos(30°) with R = 1
+
+    # Linear ramp from 1.0 (well inside) to 0.0 (well outside) across a
+    # ~1 pixel-wide boundary. `1.5/size` gives ≈1.5 image-pixel feather.
+    feather = 1.5 / size
+    alpha = np.clip((apothem - max_proj) / feather + 0.5, 0.0, 1.0)
+    alpha_u8 = (alpha * 255.0).astype(np.uint8)
+    return Image.fromarray(alpha_u8, mode="L")
+
+
+def load_hex_mask(env: Any) -> Image.Image | None:  # noqa: ARG001
+    """Return a hard-edged hex-shaped alpha mask for the canonical
+    standalone terrain-tile shape. Cached after first call.
+
+    Generated procedurally rather than loaded from the asset bundle's
+    ``Hex_Mask`` Texture2D — the asset's authored falloff is ~30 pixels
+    wide (designed to blend into neighboring tile splats at runtime),
+    which produces an oval/round look rather than a clean hexagon when
+    used as the standalone-tile alpha. The procedural variant is a true
+    point-up regular hexagon with ~1px anti-aliasing.
+
+    The ``env`` parameter is unused (kept for API compatibility with
+    older callers that expected an asset-lookup signature) — pass any
+    truthy value or ``None``.
+    """
+    global _HEX_MASK_CACHE
+    if _HEX_MASK_CACHE is None:
+        _HEX_MASK_CACHE = _generate_hex_mask()
+    return _HEX_MASK_CACHE
+
+
+def compose_pvt_texture(
+    env: Any,
+    plane: PvtPlanePart,
+    *,
+    force_hex_alpha: bool = False,
+) -> Image.Image | None:
     """Compose a single RGBA texture for one PVT plane: albedo × alpha tint.
 
     Resolves the parsed albedo_map and alpha_map PPtrs, decodes both, and
@@ -332,6 +410,13 @@ def compose_pvt_texture(env: Any, plane: PvtPlanePart) -> Image.Image | None:
     ColorChannel.cs`: 0=R, 1=G, 2=B, 3=A). `material_tiling` is intentionally
     not honored at this stage — mesh UVs already encode the authored layout.
 
+    When ``force_hex_alpha=True``, the prefab's authored alpha map is
+    ignored and the canonical ``Hex_Mask`` (R channel) is used instead —
+    the biome-ground composite path for standalone terrain-tile renders
+    uses this so blend-masked biomes (LUSH/ARID/TUNDRA/MARSH/URBAN, which
+    ship with torn-edge ``hills_Short_Mask`` / similar) come out as clean
+    hexes the way TEMPERATE/SAND already do. Albedo is unchanged.
+
     Returns None (and logs a warning) if either texture PPtr is null,
     fails to resolve, or fails to decode. The renderer's alpha-cutout
     fragment shader (alpha < 0.5 discard) handles the transparent regions
@@ -341,7 +426,7 @@ def compose_pvt_texture(env: Any, plane: PvtPlanePart) -> Image.Image | None:
     if p.albedo_map.is_null():
         logger.warning("PVT plane %r has null albedo_map; skipping", plane.host_go_name)
         return None
-    if p.alpha_map.is_null():
+    if p.alpha_map.is_null() and not force_hex_alpha:
         logger.warning("PVT plane %r has null alpha_map; skipping", plane.host_go_name)
         return None
 
@@ -349,23 +434,35 @@ def compose_pvt_texture(env: Any, plane: PvtPlanePart) -> Image.Image | None:
     if albedo_reader is None:
         logger.warning("PVT plane %r albedo_map did not resolve", plane.host_go_name)
         return None
-    alpha_reader = _resolve_pptr_to_reader(env, p.alpha_map)
-    if alpha_reader is None:
-        logger.warning("PVT plane %r alpha_map did not resolve", plane.host_go_name)
-        return None
 
     try:
         albedo_tex = albedo_reader.parse_as_object()
-        alpha_tex = alpha_reader.parse_as_object()
     except Exception as e:
-        logger.warning("PVT plane %r texture parse failed: %s", plane.host_go_name, e)
+        logger.warning("PVT plane %r albedo parse failed: %s", plane.host_go_name, e)
         return None
 
     albedo_img = _decode_texture(albedo_tex)
     if albedo_img is None:
         logger.warning("PVT plane %r albedo decode failed", plane.host_go_name)
         return None
-    alpha_img = _decode_texture(alpha_tex)
+
+    alpha_img: Image.Image | None
+    channel: int
+    if force_hex_alpha:
+        alpha_img = load_hex_mask(env)
+        channel = 0  # Hex_Mask is delivered as a single-channel ("L") image
+    else:
+        alpha_reader = _resolve_pptr_to_reader(env, p.alpha_map)
+        if alpha_reader is None:
+            logger.warning("PVT plane %r alpha_map did not resolve", plane.host_go_name)
+            return None
+        try:
+            alpha_tex = alpha_reader.parse_as_object()
+        except Exception as e:
+            logger.warning("PVT plane %r alpha parse failed: %s", plane.host_go_name, e)
+            return None
+        alpha_img = _decode_texture(alpha_tex)
+        channel = max(0, min(3, int(p.alpha_map_channel)))
     if alpha_img is None:
         logger.warning("PVT plane %r alpha decode failed", plane.host_go_name)
         return None
@@ -381,7 +478,6 @@ def compose_pvt_texture(env: Any, plane: PvtPlanePart) -> Image.Image | None:
     rgb = np.asarray(albedo_rgba, dtype=np.float32)[..., :3]  # H, W, 3
     alpha_arr = np.asarray(alpha_rgba, dtype=np.float32)  # H, W, 4
 
-    channel = max(0, min(3, int(p.alpha_map_channel)))
     alpha_channel = alpha_arr[..., channel]
 
     tint_r, tint_g, tint_b, tint_a = p.albedo_tint

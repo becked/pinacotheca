@@ -15,6 +15,7 @@ from pathlib import Path
 from pinacotheca.extractor import (
     extract_improvement_meshes,
     extract_sprites,
+    extract_terrain_tiles,
     extract_unit_meshes,
     extract_urban_composite_meshes,
 )
@@ -80,6 +81,11 @@ Examples:
                 verbose=not args.quiet,
             )
             extract_urban_composite_meshes(
+                game_data=args.game_data,
+                output_dir=args.output,
+                verbose=not args.quiet,
+            )
+            extract_terrain_tiles(
                 game_data=args.game_data,
                 output_dir=args.output,
                 verbose=not args.quiet,

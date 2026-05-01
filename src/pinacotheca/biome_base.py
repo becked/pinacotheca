@@ -107,6 +107,59 @@ def _resolve_flat_prefab_name(xml_dir: Path, terrain_z_type: str) -> str:
     return prefab
 
 
+def load_biome_base_from_prefab(
+    env: Any,
+    prefab_name: str,
+    *,
+    terrain_z_type: str = "",
+) -> BiomeBase:
+    """Load the biome base directly from a prefab name (no XML chain walk).
+
+    For callers that already know the prefab — e.g. ``terrain_index`` has
+    walked the chain across every (biome, height) tile and hands the
+    resolved prefab name in. ``terrain_z_type`` is a free-form label used
+    only for diagnostics; the cache is keyed on ``prefab_name`` so different
+    biomes can coexist.
+    """
+    cached = _BASE_CACHE.get(prefab_name)
+    if cached is not None:
+        return cached
+
+    root = find_root_gameobject(env, prefab_name)
+    if root is None:
+        raise RuntimeError(
+            f"{terrain_z_type or prefab_name}: prefab {prefab_name!r} not found in the asset bundle"
+        )
+    planes = find_pvt_splats_in_prefab(root)
+    if not planes:
+        raise RuntimeError(
+            f"{terrain_z_type or prefab_name}: prefab {prefab_name!r} "
+            "has no TerrainTexturePVTSplat plane"
+        )
+    if len(planes) > 1:
+        logger.warning(
+            "%s: prefab %r has %d PVT planes; using the first",
+            terrain_z_type or prefab_name,
+            prefab_name,
+            len(planes),
+        )
+    plane = planes[0]
+    diffuse = compose_pvt_texture(env, plane)
+    if diffuse is None:
+        raise RuntimeError(
+            f"{terrain_z_type or prefab_name}: failed to compose albedo×alpha for {prefab_name!r}"
+        )
+
+    base = BiomeBase(
+        plane=plane,
+        diffuse=diffuse,
+        prefab_name=prefab_name,
+        terrain_z_type=terrain_z_type or prefab_name,
+    )
+    _BASE_CACHE[prefab_name] = base
+    return base
+
+
 def load_biome_base(
     env: Any,
     xml_dir: Path,
@@ -124,33 +177,6 @@ def load_biome_base(
         return cached
 
     prefab_name = _resolve_flat_prefab_name(xml_dir, terrain_z_type)
-    root = find_root_gameobject(env, prefab_name)
-    if root is None:
-        raise RuntimeError(
-            f"{terrain_z_type}: prefab {prefab_name!r} not found in the asset bundle"
-        )
-    planes = find_pvt_splats_in_prefab(root)
-    if not planes:
-        raise RuntimeError(
-            f"{terrain_z_type}: prefab {prefab_name!r} has no TerrainTexturePVTSplat plane"
-        )
-    if len(planes) > 1:
-        logger.warning(
-            "%s: prefab %r has %d PVT planes; using the first",
-            terrain_z_type,
-            prefab_name,
-            len(planes),
-        )
-    plane = planes[0]
-    diffuse = compose_pvt_texture(env, plane)
-    if diffuse is None:
-        raise RuntimeError(f"{terrain_z_type}: failed to compose albedo×alpha for {prefab_name!r}")
-
-    base = BiomeBase(
-        plane=plane,
-        diffuse=diffuse,
-        prefab_name=prefab_name,
-        terrain_z_type=terrain_z_type,
-    )
+    base = load_biome_base_from_prefab(env, prefab_name, terrain_z_type=terrain_z_type)
     _BASE_CACHE[terrain_z_type] = base
     return base

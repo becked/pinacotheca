@@ -120,6 +120,11 @@ class TestCategorize:
 
     def test_terrains(self) -> None:
         assert categorize("TERRAIN_DESERT") == "terrains"
+        # 3D terrain renders share the category with 2D icons (same
+        # convention as IMPROVEMENT_3D_* sharing 'improvements').
+        assert categorize("TERRAIN_3D_TEMPERATE_FLAT") == "terrains"
+        assert categorize("TERRAIN_3D_WATER_OCEAN") == "terrains"
+        assert categorize("TERRAIN_3D_TUNDRA_MOUNTAIN") == "terrains"
 
     def test_families(self) -> None:
         assert categorize("FAMILY_JULIUS") == "families"
