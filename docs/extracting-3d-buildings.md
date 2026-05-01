@@ -308,7 +308,7 @@ Schema (`version: 1`):
   },
   "framing": {
     "projection": "orthographic",
-    "tiltDeg": 30.0,
+    "tiltDeg": 45.0,
     "distance": 2.944,
     "frustumHalfSize": 1.214,
     "fovDeg": null
@@ -328,7 +328,11 @@ Field semantics:
 - `composition`: `"prefab"` for standalone improvements / resources / units (per-prefab tight bbox); `"layered"` for capitals, urbans, generic-city (`IMPROVEMENT_3D_CITY*.png`), and per-(improvement, nation) urban composites — the bbox covers the *whole* composited scene (biome ∪ PVT ∪ buildings), so per-ankh should not relative-scale layered outputs against per-prefab ones.
 - `world.maxExtent`: the value the renderer also feeds into `distance = max_extent * 1.6` and `half_w = max_extent * 0.66`. Primary signal for relative scaling: `R.maxExtent / I.maxExtent`.
 - `world.bboxMin/Max`: full Unity-world bbox for non-uniform scaling (e.g. when two prefabs share a maxExtent but differ in aspect).
-- `world.groundHex` *(layered renders only; `null` for prefab)*: world-space bbox of the hex-shaped ground plane (biome + PVT, scaled per-render to fit the buildings/PVT footprint). The mesh is a quad whose visual hex outline comes from `Hex_Mask` alpha — this is the underlying quad's axis-aligned extent, suitable for anchoring a hex-clip region. Use this to align the ground footprint to a hex cell instead of cover-fitting the whole PNG: a tall building (cathedral, ziggurat) then overflows above the cell rather than getting forced into it. Convert to pixel coords via `(world - world.bboxMin) / render.worldUnitsPerOutputPixel`.
+- `world.groundHex` *(layered renders only; `null` for prefab)*: hex ground plane bbox in two coordinate systems. The mesh is a quad whose visual hex outline comes from `Hex_Mask` alpha (pointy-top, R = 5; world dims 8.66 × 10 inscribed in a 10 × 10 quad).
+    - `bboxMin`/`bboxMax`: world-space AABB of the underlying biome **quad** (the rendered mesh; scaled per-render to fit the buildings/PVT footprint). Same units as `world.bboxMin`.
+    - `pixelBboxMin`/`pixelBboxMax`: output-PNG pixel-space AABB of the **visible inscribed hex** (alpha-defined). Per-ankh aligns its hex cell to this rectangle directly. Derived from the biome layer's alpha after the final autocrop + LANCZOS upscale, so it accounts for everything (camera projection, padding, upscale) without consumers re-deriving the math.
+    - Use `pixelBboxMin/Max` for cell alignment. The world bbox is informational — converting it to pixels via `(world - world.bboxMin) / worldUnitsPerOutputPixel` gives correct X but oversimplifies Y under non-zero tilt (z and y both contribute to screen-y), which is exactly the case `pixelBboxMin/Max` exists to handle.
+- `framing.tiltDeg`: orthographic camera pitch from horizontal. `45.0` for buildings/improvements/resources/layered, matching the game's main camera (`decompiled/Assembly-CSharp/GameCamera.cs:52-56`, `Vector3(45, 0, 0)` Euler at every zoom level). At this tilt a pointy-top R=5 hex projects to aspect ≈ 1.225 in screen space (`8.66 / (10 × sin 45°)`).
 - `framing`: bookkeeping. `frustumHalfSize` is set for orthographic (improvements / resources / layered); `fovDeg` for perspective (units). The unused field is `null`.
 - `render.worldUnitsPerOutputPixel`: load-bearing for absolute pixel placement on a tile. Accounts for both the autocrop and the LANCZOS upscale `autocrop_with_padding` applies when content is < 256px on both axes — consumers should use this scalar directly rather than re-deriving from `frustumHalfSize` and `preCropWidthPx`, which would miss the upscale correction.
 

@@ -232,16 +232,13 @@ def render_layered_ground(
     #     Capture the biome bbox separately for the layered sidecar's
     #     `world.groundHex` field so consumers can anchor a hex-clip region
     #     to the ground footprint instead of cover-fitting the whole PNG.
+    #     The pixel-space half of `groundHex` is filled in below, after the
+    #     biome layer renders and the final autocrop establishes the pixel
+    #     coordinate frame.
     bboxes: list[tuple[NDArray[np.float64], NDArray[np.float64]]] = []
     biome_bbox = _bbox_of_obj(biome_obj)
-    ground_hex_bounds: GroundHexBounds | None = None
     if biome_bbox is not None:
         bboxes.append(biome_bbox)
-        bmin, bmax = biome_bbox
-        ground_hex_bounds = GroundHexBounds(
-            bbox_min=(float(bmin[0]), float(bmin[1]), float(bmin[2])),
-            bbox_max=(float(bmax[0]), float(bmax[1]), float(bmax[2])),
-        )
     bboxes.extend(target_bboxes)
 
     if not bboxes:
@@ -270,6 +267,10 @@ def render_layered_ground(
         bbox_override=shared_bbox,
         flat_lighting=True,
     )
+    # The biome layer's alpha is the inscribed hex shape (Hex_Mask × the
+    # quad mesh). Capture its pre-crop pixel AABB now so we can translate
+    # it into output-PNG coords after the final autocrop.
+    biome_pre_crop_bbox = biome_layer.getbbox()
     _stack(biome_layer)
 
     for _plane, plane_obj, tex in nation_planes_with_texture:
@@ -302,7 +303,9 @@ def render_layered_ground(
         _stack(building_layer)
 
     assert composite is not None
-    final_img, cropped_dims_pre_upscale = autocrop_with_padding(composite, padding=padding)
+    final_img, cropped_dims_pre_upscale, crop_origin = autocrop_with_padding(
+        composite, padding=padding
+    )
 
     # Build the layered metadata. All inner layer renders shared
     # `bbox_override=shared_bbox` and `autocrop=False`, so any layer's
@@ -316,6 +319,30 @@ def render_layered_ground(
     )
     pre_crop_units_per_pixel = layer_metadata.render.world_units_per_output_pixel
     final_units_per_pixel = pre_crop_units_per_pixel / upscale_factor if upscale_factor > 0 else 0.0
+
+    # Translate the biome's pre-crop alpha bbox into output-PNG pixel
+    # coords by subtracting the autocrop origin and applying any LANCZOS
+    # upscale. This is the visible inscribed hex's AABB inside the final
+    # PNG — what per-ankh aligns its hex cell to.
+    ground_hex_bounds: GroundHexBounds | None = None
+    if biome_bbox is not None:
+        bmin, bmax = biome_bbox
+        pixel_bbox_min: tuple[int, int] | None = None
+        pixel_bbox_max: tuple[int, int] | None = None
+        if biome_pre_crop_bbox is not None:
+            crop_x, crop_y = crop_origin
+            x0 = int(round((biome_pre_crop_bbox[0] - crop_x) * upscale_factor))
+            y0 = int(round((biome_pre_crop_bbox[1] - crop_y) * upscale_factor))
+            x1 = int(round((biome_pre_crop_bbox[2] - crop_x) * upscale_factor))
+            y1 = int(round((biome_pre_crop_bbox[3] - crop_y) * upscale_factor))
+            pixel_bbox_min = (x0, y0)
+            pixel_bbox_max = (x1, y1)
+        ground_hex_bounds = GroundHexBounds(
+            bbox_min=(float(bmin[0]), float(bmin[1]), float(bmin[2])),
+            bbox_max=(float(bmax[0]), float(bmax[1]), float(bmax[2])),
+            pixel_bbox_min=pixel_bbox_min,
+            pixel_bbox_max=pixel_bbox_max,
+        )
 
     shared_min, shared_max = shared_bbox
     shared_extent = shared_max - shared_min

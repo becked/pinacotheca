@@ -299,7 +299,7 @@ void main() {
 
 def autocrop_with_padding(
     img: "Image.Image", padding: int = 32, min_size: int = 256
-) -> tuple["Image.Image", tuple[int, int]]:
+) -> tuple["Image.Image", tuple[int, int], tuple[int, int]]:
     """
     Crop image to non-transparent content with padding, then optionally
     LANCZOS-upscale tiny crops to a minimum size.
@@ -310,18 +310,22 @@ def autocrop_with_padding(
         min_size: Minimum output dimension
 
     Returns:
-        ``(image, (cropped_w_pre_upscale, cropped_h_pre_upscale))``. The
-        returned image may have been LANCZOS-resized when both cropped
+        ``(image, (cropped_w_pre_upscale, cropped_h_pre_upscale), (left, top))``.
+        The image may have been LANCZOS-resized when both cropped
         dimensions were below ``min_size``; the second element gives the
-        cropped dimensions *before* that upscale, so callers can derive
-        the upscale factor (and thus correct world-units-per-output-pixel
-        scaling).
+        cropped dimensions *before* that upscale (so callers can derive
+        the upscale factor and correct world-units-per-output-pixel
+        scaling). The third element is the crop origin (post-padding) in
+        the original input image's pixel coordinates — load-bearing for
+        callers that need to translate pre-crop pixel positions into
+        output-image pixel positions (e.g. layered-render's
+        ``world.groundHex.pixelBboxMin/Max`` derivation).
     """
     from PIL import Image
 
     bbox = img.getbbox()
     if not bbox:
-        return img, img.size
+        return img, img.size, (0, 0)
 
     # Expand bbox with padding
     left = max(0, bbox[0] - padding)
@@ -341,7 +345,7 @@ def autocrop_with_padding(
         new_h = int(h * scale)
         cropped = cropped.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-    return cropped, cropped_dims
+    return cropped, cropped_dims, (left, top)
 
 
 def render_mesh_to_image(
@@ -547,15 +551,18 @@ def render_mesh_to_image(
                 2.0 * distance_h * float(np.tan(np.radians(60.0 / 2.0)))
             ) / width
         elif force_upright:
-            # Building/resource view: 30° downward, orthographic. The game's
-            # camera is ~25–40 world units from any single hex (a hex is ~4
-            # units across), so perspective on a single tile approximates
-            # ortho. Using true ortho here matches what the game shows on a
-            # single tile and avoids depth-crunch on multi-rig resource
-            # prefabs (e.g. herd of goats) where close perspective collapses
-            # back-row and front-row animals onto similar screen-Y.
+            # Building/resource view: 45° downward, orthographic. Matches
+            # the game's main camera, which is locked at 45° pitch at every
+            # zoom level (decompiled GameCamera.cs:52-56:
+            # minZoomRotation = maxZoomRotation = cityMinZoomRotation =
+            # Vector3(45, 0, 0)). The game's camera is ~25–40 world units
+            # from any single hex (a hex is ~9 units across), so perspective
+            # on a single tile approximates ortho — true ortho here avoids
+            # depth-crunch on multi-rig resource prefabs (e.g. herd of
+            # goats) where close perspective collapses back-row and
+            # front-row animals onto similar screen-Y.
             distance = max_extent * 1.6
-            tilt_deg = 30.0
+            tilt_deg = 45.0
             sin_t = float(np.sin(np.radians(tilt_deg)))
             cos_t = float(np.cos(np.radians(tilt_deg)))
             eye = center + np.array([0.0, distance * sin_t, distance * cos_t])
@@ -609,7 +616,9 @@ def render_mesh_to_image(
 
         # Auto-crop to content
         if autocrop:
-            img, cropped_dims_pre_upscale = autocrop_with_padding(img, padding=padding)
+            img, cropped_dims_pre_upscale, _crop_origin = autocrop_with_padding(
+                img, padding=padding
+            )
         else:
             cropped_dims_pre_upscale = img.size
 

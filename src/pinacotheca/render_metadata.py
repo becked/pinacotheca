@@ -36,16 +36,30 @@ Projection = Literal["orthographic", "perspective"]
 
 @dataclass(frozen=True)
 class GroundHexBounds:
-    """World-space bbox of the layered hex ground plane (biome + PVT).
+    """Hex ground plane bbox for layered renders.
 
-    Present only on layered renders. The mesh is a quad whose visual hex
-    shape comes from the ``Hex_Mask`` alpha — this bbox is the underlying
-    quad's axis-aligned extent, which is what consumers anchor a
-    hex-clip region to. ``None`` on prefab renders.
+    Two coordinate systems, deliberately asymmetric:
+
+    - ``bbox_min``/``bbox_max``: world-space AABB of the underlying biome
+      **quad** (the rendered mesh). The quad is square (typically
+      10×10 world units, scaled per-render to fit the buildings/PVT
+      footprint). World coords; same units as ``WorldBounds.bbox_min``.
+
+    - ``pixel_bbox_min``/``pixel_bbox_max``: output-PNG pixel-space AABB
+      of the **visible inscribed hex** (alpha-defined by the
+      ``Hex_Mask`` texture, pointy-top, R = 5). Derived from the biome
+      layer's alpha after the final composite autocrop + upscale, so it
+      reflects the actual hex shape consumers see in the PNG. Per-ankh
+      cover-fits this rectangle to a hex cell directly; no projection
+      math required.
+
+    Both are ``None`` on prefab renders.
     """
 
     bbox_min: tuple[float, float, float]
     bbox_max: tuple[float, float, float]
+    pixel_bbox_min: tuple[int, int] | None = None
+    pixel_bbox_max: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +132,16 @@ class RenderMetadata:
                     else {
                         "bboxMin": list(self.world.ground_hex.bbox_min),
                         "bboxMax": list(self.world.ground_hex.bbox_max),
+                        "pixelBboxMin": (
+                            None
+                            if self.world.ground_hex.pixel_bbox_min is None
+                            else list(self.world.ground_hex.pixel_bbox_min)
+                        ),
+                        "pixelBboxMax": (
+                            None
+                            if self.world.ground_hex.pixel_bbox_max is None
+                            else list(self.world.ground_hex.pixel_bbox_max)
+                        ),
                     }
                 ),
             },

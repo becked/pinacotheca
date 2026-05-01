@@ -31,7 +31,7 @@ def _ortho_metadata() -> RenderMetadata:
         ),
         framing=FramingInfo(
             projection="orthographic",
-            tilt_deg=30.0,
+            tilt_deg=45.0,
             distance=3.2,
             frustum_half_size=1.32,
             fov_deg=None,
@@ -136,7 +136,7 @@ class TestToJsonDict:
             ),
             framing=FramingInfo(
                 projection="orthographic",
-                tilt_deg=30.0,
+                tilt_deg=45.0,
                 distance=6.4,
                 frustum_half_size=2.64,
                 fov_deg=None,
@@ -152,10 +152,51 @@ class TestToJsonDict:
         d = meta.to_json_dict()
         gh = d["world"]["groundHex"]
         assert isinstance(gh, dict)
-        assert set(gh.keys()) == {"bboxMin", "bboxMax"}
+        assert set(gh.keys()) == {"bboxMin", "bboxMax", "pixelBboxMin", "pixelBboxMax"}
         assert gh["bboxMin"] == [-1.5, 0.0, -1.3]
         assert gh["bboxMax"] == [1.5, 0.0, 1.3]
         assert isinstance(gh["bboxMin"], list)
+        # No pixel bbox supplied → emitted as null (not omitted) for shape stability.
+        assert gh["pixelBboxMin"] is None
+        assert gh["pixelBboxMax"] is None
+
+    def test_pixel_bbox_serialized_when_set(self) -> None:
+        meta = RenderMetadata(
+            version=SCHEMA_VERSION,
+            composition="layered",
+            world=WorldBounds(
+                max_extent=4.0,
+                bbox_min=(-2.0, 0.0, -2.0),
+                bbox_max=(2.0, 3.5, 2.0),
+                ground_hex=GroundHexBounds(
+                    bbox_min=(-1.5, 0.0, -1.3),
+                    bbox_max=(1.5, 0.0, 1.3),
+                    pixel_bbox_min=(48, 91),
+                    pixel_bbox_max=(723, 642),
+                ),
+            ),
+            framing=FramingInfo(
+                projection="orthographic",
+                tilt_deg=45.0,
+                distance=6.4,
+                frustum_half_size=2.64,
+                fov_deg=None,
+            ),
+            render=RenderInfo(
+                pre_crop_width_px=2048,
+                pre_crop_height_px=2048,
+                output_width_px=800,
+                output_height_px=700,
+                world_units_per_output_pixel=0.005,
+            ),
+        )
+        d = meta.to_json_dict()
+        gh = d["world"]["groundHex"]
+        assert gh["pixelBboxMin"] == [48, 91]
+        assert gh["pixelBboxMax"] == [723, 642]
+        # JSON has no tuple type — serialized as lists.
+        assert isinstance(gh["pixelBboxMin"], list)
+        assert isinstance(gh["pixelBboxMax"], list)
 
 
 class TestWithers:
@@ -218,10 +259,12 @@ class TestAutocropReturnsCroppedDims:
         from PIL import Image
 
         img = Image.new("RGBA", (256, 256), (0, 0, 0, 0))  # fully transparent
-        out, dims = autocrop_with_padding(img)
+        out, dims, crop_origin = autocrop_with_padding(img)
         # Empty bbox → return the input untouched
         assert out is img
         assert dims == (256, 256)
+        # No crop happened — origin is (0, 0).
+        assert crop_origin == (0, 0)
 
     def test_crop_without_upscale_returns_post_crop_dims(self) -> None:
         from PIL import Image
@@ -231,11 +274,13 @@ class TestAutocropReturnsCroppedDims:
         # upscale will happen.
         block = Image.new("RGBA", (600, 600), (255, 0, 0, 255))
         img.paste(block, (200, 200))
-        out, cropped_dims = autocrop_with_padding(img, padding=0)
+        out, cropped_dims, crop_origin = autocrop_with_padding(img, padding=0)
         # No upscale — output dims equal cropped_dims.
         assert out.size == cropped_dims
         # Cropped should be exactly 600x600 (no padding).
         assert cropped_dims == (600, 600)
+        # Crop origin is the block's top-left in the original image.
+        assert crop_origin == (200, 200)
 
     def test_crop_with_upscale_returns_pre_upscale_dims(self) -> None:
         from PIL import Image
@@ -244,7 +289,7 @@ class TestAutocropReturnsCroppedDims:
         # 50x50 block — well below min_size=256, will trigger LANCZOS upscale.
         block = Image.new("RGBA", (50, 50), (0, 255, 0, 255))
         img.paste(block, (500, 500))
-        out, cropped_dims = autocrop_with_padding(img, padding=0)
+        out, cropped_dims, crop_origin = autocrop_with_padding(img, padding=0)
         # Pre-upscale crop is 50x50; output is upscaled to 256 on the larger axis.
         assert cropped_dims == (50, 50)
         assert max(out.size) == 256
@@ -252,6 +297,8 @@ class TestAutocropReturnsCroppedDims:
         # where the renderer needs both to compute the correct
         # world-units-per-output-pixel.
         assert out.size != cropped_dims
+        # Crop origin still references pre-upscale coords.
+        assert crop_origin == (500, 500)
 
 
 def _opengl_available() -> bool:
@@ -309,7 +356,7 @@ class TestRenderMeshToImageReturnsMetadata:
         )
         assert meta.composition == "prefab"
         assert meta.framing.projection == "orthographic"
-        assert meta.framing.tilt_deg == 30.0
+        assert meta.framing.tilt_deg == 45.0
         assert meta.framing.fov_deg is None
         assert meta.framing.frustum_half_size is not None
         # Quad spans 2 units on X and Z, 0 on Y → max_extent = 2.0

@@ -152,7 +152,7 @@ def _install_stubs(monkeypatch, layer_colors: list[tuple[int, int, int, int]]):
             world=WorldBounds(max_extent=1.0, bbox_min=(0.0, 0.0, 0.0), bbox_max=(1.0, 1.0, 1.0)),
             framing=FramingInfo(
                 projection="orthographic",
-                tilt_deg=30.0,
+                tilt_deg=45.0,
                 distance=1.6,
                 frustum_half_size=0.66,
                 fov_deg=None,
@@ -170,12 +170,12 @@ def _install_stubs(monkeypatch, layer_colors: list[tuple[int, int, int, int]]):
     monkeypatch.setattr(lr, "render_mesh_to_image", fake_render_mesh_to_image)
 
     # autocrop_with_padding pass-through; the orchestrator's final crop is
-    # tested separately on real images. Return (image, dims) per the new
-    # autocrop contract.
+    # tested separately on real images. Return (image, dims, crop_origin)
+    # per the autocrop contract — origin (0, 0) since we don't actually crop.
     monkeypatch.setattr(
         lr,
         "autocrop_with_padding",
-        lambda img, padding=0: (img, img.size),  # noqa: ARG005
+        lambda img, padding=0: (img, img.size, (0, 0)),  # noqa: ARG005
     )
 
     return calls
@@ -240,6 +240,12 @@ def test_layer_order_biome_then_pvt_sorted_then_buildings(monkeypatch) -> None:
     # PVT + buildings extend the shared bbox beyond the biome on at least
     # one axis, so the ground hex is strictly smaller in some dimension.
     assert np.any((gh_max - gh_min) < (shared_max - shared_min))
+    # The pixel bbox is derived from the biome layer's alpha + autocrop
+    # crop origin. With pass-through autocrop (origin (0, 0), no upscale)
+    # and a fully-opaque biome stub at the default render size, the bbox
+    # covers the whole frame.
+    assert meta.world.ground_hex.pixel_bbox_min == (0, 0)
+    assert meta.world.ground_hex.pixel_bbox_max == (2048, 2048)
 
 
 def test_empty_pvt_planes_renders_biome_plus_buildings(monkeypatch) -> None:
