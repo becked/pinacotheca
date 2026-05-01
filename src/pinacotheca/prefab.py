@@ -707,16 +707,25 @@ def _find_texture_for_prefab(
 
 def find_diffuse_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
     """Return the prefab's diffuse texture with neutral-color team-tint
-    substitution applied, or None if no diffuse is found.
+    substitution + auto-luminance compensation applied, or None if no
+    diffuse is found.
 
     The neutral substitution swaps hand-painted pink placeholder pixels
     (intended for runtime team-color tinting via `_PrimaryTeamColor`) for
     a stone-gray. See `apply_neutral_team_color` for details.
+
+    Auto-luminance compensation lifts the brightness of unusually-dark
+    diffuses (Yazilikaya is the canonical case — diffuse mean RGB
+    (41, 38, 32), ~4× darker than typical wonders) toward a typical
+    range. See `apply_auto_luminance_compensation`. No-op for textures
+    whose mean luminance is already in the typical range (threshold
+    gated, so Library / Granary / etc. pass through unchanged).
     """
     img = _find_texture_for_prefab(parts, _DIFFUSE_PROPERTY_KEYS)
     if img is None:
         return None
-    return apply_neutral_team_color(img)
+    img = apply_neutral_team_color(img)
+    return apply_auto_luminance_compensation(img)
 
 
 def find_normal_map_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
@@ -750,6 +759,66 @@ def find_packed_pbr_for_prefab(parts: list[PrefabPart]) -> Image.Image | None:
         )
         return None
     return img
+
+
+# Threshold + target for auto-luminance compensation. Tuned against the
+# wonder set: Yazilikaya (mean visible luminance ≈ 38) is the dark
+# outlier we want to lift; Library / Granary / Acropolis / Hanging
+# Garden / Pyramid all sit at 125–149, well above the threshold and
+# untouched. Threshold at 70 leaves a comfortable margin for "normal"
+# stone tones; target 130 lands the lift in the same range as those
+# wonders so the compensated output reads like a peer.
+_AUTO_LUMINANCE_THRESHOLD: float = 70.0
+_AUTO_LUMINANCE_TARGET: float = 130.0
+
+
+def apply_auto_luminance_compensation(diffuse: Image.Image) -> Image.Image:
+    """Lift unusually-dark diffuse textures toward a typical brightness range.
+
+    Some prefabs (Yazilikaya is the canonical case) ship with diffuse
+    textures authored ~4× darker than peers because the in-game HDRP
+    pipeline brightens them via tone mapping + exposure compensation +
+    indirect ambient. Our offline renderer doesn't model those, so dark-
+    authored materials render flat-dark. This is a pre-process: when the
+    diffuse's masked mean luminance is below ``_AUTO_LUMINANCE_THRESHOLD``,
+    multiply RGB by ``target / measured_luminance`` (clamped to 255).
+
+    Threshold-gated: textures already in the typical 70+ range are
+    returned untouched. Considered and rejected: a full HDR tone-map
+    pipeline (linearize → exposure → ACES → encode) — it brightened the
+    entire catalog 1.15–1.7× because ACES naturally lifts mid-tones, so
+    already-bright wonders washed out. This narrower fix only touches
+    Yazilikaya-class outliers.
+
+    Returns the input image unchanged if it has no visible (alpha > 128)
+    pixels or if its luminance is at/above the threshold.
+    """
+    arr = np.asarray(diffuse.convert("RGBA"))
+    rgb = arr[..., :3]
+    alpha = arr[..., 3]
+    visible_mask = alpha > 128
+    if not visible_mask.any():
+        return diffuse
+    visible = rgb[visible_mask]
+    luminance = float(
+        visible[:, 0].mean() * 0.30
+        + visible[:, 1].mean() * 0.59
+        + visible[:, 2].mean() * 0.11
+    )
+    if luminance >= _AUTO_LUMINANCE_THRESHOLD:
+        return diffuse
+    if luminance <= 0.0:
+        return diffuse
+    scale = _AUTO_LUMINANCE_TARGET / luminance
+    out = arr.astype(np.float32).copy()
+    out[..., :3] = np.clip(out[..., :3] * scale, 0.0, 255.0)
+    logger.debug(
+        "Auto-luminance compensation: lifted dark diffuse (lum=%.1f → target=%.1f, scale=%.2f×)",
+        luminance,
+        _AUTO_LUMINANCE_TARGET,
+        scale,
+    )
+    return Image.fromarray(out.astype(np.uint8), mode="RGBA")
 
 
 def apply_neutral_team_color(diffuse: Image.Image) -> Image.Image:
