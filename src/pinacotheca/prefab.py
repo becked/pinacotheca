@@ -801,9 +801,7 @@ def apply_auto_luminance_compensation(diffuse: Image.Image) -> Image.Image:
         return diffuse
     visible = rgb[visible_mask]
     luminance = float(
-        visible[:, 0].mean() * 0.30
-        + visible[:, 1].mean() * 0.59
-        + visible[:, 2].mean() * 0.11
+        visible[:, 0].mean() * 0.30 + visible[:, 1].mean() * 0.59 + visible[:, 2].mean() * 0.11
     )
     if luminance >= _AUTO_LUMINANCE_THRESHOLD:
         return diffuse

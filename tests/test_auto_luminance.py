@@ -21,9 +21,7 @@ def _visible_luminance(img: Image.Image) -> float:
     if visible.size == 0:
         return 0.0
     return float(
-        visible[:, 0].mean() * 0.30
-        + visible[:, 1].mean() * 0.59
-        + visible[:, 2].mean() * 0.11
+        visible[:, 0].mean() * 0.30 + visible[:, 1].mean() * 0.59 + visible[:, 2].mean() * 0.11
     )
 
 

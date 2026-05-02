@@ -245,9 +245,7 @@ def _bbox_of_obj(obj_str: str) -> tuple[NDArray[np.float64], NDArray[np.float64]
     return arr.min(axis=0), arr.max(axis=0)
 
 
-def _displaced_visible_extent_xz(
-    obj_str: str, *, height_fraction: float = 0.1
-) -> float | None:
+def _displaced_visible_extent_xz(obj_str: str, *, height_fraction: float = 0.1) -> float | None:
     """Return the maximum XZ extent of vertices visibly raised by the
     heightmap displacement (Y > height_fraction × max_Y).
 
@@ -761,8 +759,7 @@ def _render_water_tile(env: Any, tile: TerrainTile) -> tuple[Image.Image, Render
     )
     if surface_layer is None:
         raise RuntimeError(
-            f"{tile.output_name}: no water surface mesh found "
-            f"(prefab={tile.water_prefab!r})"
+            f"{tile.output_name}: no water surface mesh found (prefab={tile.water_prefab!r})"
         )
     biome_bbox = _bbox_of_obj(surface_layer.obj_str)
     return _render_layers(
