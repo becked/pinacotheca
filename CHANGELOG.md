@@ -2,7 +2,27 @@
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-05-01
+
 ### Added
+- 3D terrain tile renders covering the canonical 28-tile set:
+  `extracted/sprites/terrains/TERRAIN_3D_<BIOME>_<HEIGHT>.png` for 6
+  land biomes (TEMPERATE / LUSH / ARID / SAND / TUNDRA / MARSH) × 4
+  heights (FLAT / HILL / MOUNTAIN / VOLCANO) plus URBAN_FLAT and
+  WATER × {COAST, OCEAN, LAKE}. HILL / MOUNTAIN / VOLCANO carry real
+  3D peak geometry: the prefabs ship as flat Quads, but the runtime
+  `TerrainHeightSplat` vertex displacement is replicated offline as
+  CPU tessellation in `terrain_height_splat.tessellate_displaced_obj`
+  (sample heightmap R-channel at each UV, displace world Y by
+  `R × intensity`). Mountains pick a biome-appropriate PVT plane
+  (Snow / Arid / Grass) for the peak texture; water tiles render the
+  seabed PVT with a sky-tint × transmittance blend. New modules
+  `terrain_index.py` (chain walker), `terrain_height_splat.py`
+  (parser + tessellation), `terrain_render.py` (orchestrator). Wired
+  into the standard `pinacotheca` run. Outputs are tagged
+  `composition: "layered"`. Per-ankh looks these up by
+  `(tile.biome, tile.height)` and must not draw a separate terrain
+  layer underneath.
 - Per-render JSON metadata sidecar next to every 3D PNG output
   (`IMPROVEMENT_3D_*`, `RESOURCE_3D_*`, `UNIT_3D_*`, layered tiles).
   Schema lives in new module `src/pinacotheca/render_metadata.py`
@@ -16,15 +36,54 @@
   `"prefab"`. Closes #4. See `docs/extracting-3d-buildings.md`
   "Metadata sidecar" for the full schema and per-ankh's intended
   consumption pattern.
+- `world.groundHex` on layered sidecars: world-space `bboxMin/Max` of
+  the visible inscribed ground hex plus `pixelBboxMin/Max` — the same
+  rectangle in output PNG pixel coordinates, derived from the biome
+  layer's alpha after autocrop + LANCZOS upscale. Per-ankh anchors
+  hex-clip cells to this rectangle directly with no projection math,
+  resolving the transparent-apex artifact (issue #5) on tall
+  buildings whose bbox extended above the ground hex. Additive — the
+  field is `null` on prefab sidecars and the schema version is
+  unchanged.
+- Auto-brighten unusually-dark diffuse textures
+  (`prefab.apply_auto_luminance_compensation`). Yazilikaya's diffuse
+  was authored ~4× darker than peer wonders — the in-game HDRP
+  pipeline lifts it via tone mapping + exposure + indirect ambient,
+  but our offline renderer treats sRGB textures as display-ready.
+  The new pre-process is threshold-gated (mean BT.601 luminance over
+  `alpha > 128` pixels < 70 → scale RGB toward 130, clamped to 255);
+  Library / Granary / Acropolis / Hanging Garden / Pyramid measure
+  above the threshold and pass through bit-identical.
 
 ### Changed
+- Camera tilt switched 30° → 45° to match the in-game main camera
+  (`GameCamera.cs:52-56`, used at every zoom level). Aligns rendered
+  hex shapes on layered tiles with what the game shows on a single
+  tile. The 30° value pre-dated decompiled-source verification.
+- MonoBehaviour decode now routes through `TypeTreeGenerator` (new
+  `typetreegeneratorapi` dependency, new `src/pinacotheca/typetree.py`)
+  instead of four hand-rolled binary parsers for `ClutterTransforms`,
+  `TerrainTexturePVTSplat`, `TerrainHeightSplat`, and
+  `TerrainClutterSplat`. Per-class adapter functions remap the
+  resulting PascalCase typetree dicts into our existing snake_case
+  dataclasses, so call sites stay unchanged. Layout drift now fails
+  loudly with `KeyError` on a missing/renamed field rather than a
+  body-budget mismatch. Bit-for-bit parity validated against all
+  1417 MonoBehaviour instances in the current build (140
+  `ClutterTransforms`, 538 `TerrainHeightSplat`, 437
+  `TerrainTexturePVTSplat`, 302 `TerrainClutterSplat`). See
+  `docs/typetree-migration.md`.
 - `render_mesh_to_image` and `render_layered_ground` return
   `(Image, RenderMetadata)` tuples instead of bare `Image`. All
   internal call sites updated; this is a public API change to the
   exported renderer entry point.
-- `autocrop_with_padding` returns `(image, cropped_dims_pre_upscale)`
-  so the renderer can derive a correct
-  `worldUnitsPerOutputPixel` when the min-size LANCZOS upscale fires.
+- `autocrop_with_padding` now returns
+  `(image, cropped_dims_pre_upscale, crop_origin)` — the second
+  element gives cropped dimensions before the min-size LANCZOS
+  upscale (so callers can derive `worldUnitsPerOutputPixel`); the
+  third gives the post-padding crop origin in input-image pixel
+  coordinates (so layered_render can map biome-alpha pre-crop coords
+  into output PNG pixel coords for `groundHex.pixelBboxMin/Max`).
 - `gallery_filter.matches_filter` now uses an inline glob→regex
   translator (`_compile_glob`) instead of `fnmatch.fnmatchcase`. The
   stdlib version lets `*` cross `/`, which silently broadened patterns
@@ -38,6 +97,12 @@
   (`improvements/*.json`, `resources/*.json`, `units/*.json`) from the
   gh-pages deploy. Sidecars are consumed by per-ankh from the local
   tree; the deployed SvelteKit gallery only displays PNGs.
+
+### Documentation
+- `docs/typetree-migration.md` (new) — migration plan and history
+  for replacing hand-parsed MonoBehaviours with `TypeTreeGenerator`.
+- `docs/typetree-spike-findings.md` (new) — investigation notes from
+  the typetree spike.
 
 ## [2.2.0] - 2026-04-30
 
