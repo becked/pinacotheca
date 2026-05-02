@@ -1,7 +1,10 @@
 {
-  "generatedAt": "2026-04-30T12:38:52.219485+00:00",
+  "generatedAt": "2026-05-02T01:34:39.969584+00:00",
   "excludeGlobs": [
-    "improvements/IMPROVEMENT_3D_*_*_URBAN.png"
+    "improvements/IMPROVEMENT_3D_*_*_URBAN.png",
+    "improvements/*.json",
+    "resources/*.json",
+    "units/*.json"
   ],
-  "reason": "Per-(improvement, nation) urban composites \u2014 used by per-ankh's atlas renderer (sister tool) but excluded from the gh-pages gallery deploy because they push the site over GitHub Pages' 1 GB limit."
+  "reason": "Per-(improvement, nation) urban composites \u2014 used by per-ankh's atlas renderer (sister tool) but excluded from the gh-pages gallery deploy because they push the site over GitHub Pages' 1 GB limit. Render-metadata JSON sidecars (`*.json` next to each 3D PNG) are consumed by per-ankh from the local `extracted/` tree; they are not needed by the deployed SvelteKit gallery so are excluded from the gh-pages bundle."
 }
