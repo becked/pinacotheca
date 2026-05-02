@@ -1,13 +1,11 @@
-"""ClutterTransforms binary parser, Unity-binary helpers, and prefab-tree
-walker that produces PrefabPart records for the existing renderer.
+"""ClutterTransforms decoder + prefab-tree walker that produces PrefabPart
+records for the existing renderer.
 
 ClutterTransforms is a Unity MonoBehaviour Old World uses to instance many
-copies of a small set of meshes (capital buildings, urban tile flavor, etc.).
-Its body has no embedded TypeTree in resources.assets, so UnityPy's
-parse_as_object() reads only the 32-byte base header. We hand-parse the
-binary against the field layout from the decompiled C# (decompiled/
-Assembly-CSharp/ClutterTransforms.cs:208-244 + ClutterTransform.cs:1-30 +
-ClutterBase.cs:1-188 — verified to contribute zero serialized bytes).
+copies of a small set of meshes (capital buildings, urban tile flavor,
+etc.). Bundles ship without inline TypeTrees, so we route MonoBehaviour
+decode through `pinacotheca.typetree` (TypeTreeGeneratorAPI reads
+Assembly-CSharp.dll on demand and feeds UnityPy's `read_typetree`).
 
 For the rendering math see docs/runtime-composed-cities.md.
 """
@@ -32,66 +30,15 @@ from pinacotheca.prefab import (
 logger = logging.getLogger(__name__)
 
 
-# ============================================================
-# Generic Unity-binary helpers
-# ============================================================
-
-
 @dataclass(frozen=True)
 class PPtr:
-    """A Unity PPtr in serialized binary form: int32 m_FileID + int64 m_PathID."""
+    """A Unity PPtr: int32 m_FileID + int64 m_PathID."""
 
     file_id: int
     path_id: int
 
     def is_null(self) -> bool:
         return self.file_id == 0 and self.path_id == 0
-
-
-class Reader:
-    """Stream reader over a bytes buffer with Unity alignment helpers."""
-
-    __slots__ = ("data", "pos")
-
-    def __init__(self, data: bytes, offset: int = 0) -> None:
-        self.data = data
-        self.pos = offset
-
-    def read_int32(self) -> int:
-        v = struct.unpack_from("<i", self.data, self.pos)[0]
-        self.pos += 4
-        return int(v)
-
-    def read_int64(self) -> int:
-        v = struct.unpack_from("<q", self.data, self.pos)[0]
-        self.pos += 8
-        return int(v)
-
-    def read_float(self) -> float:
-        v = struct.unpack_from("<f", self.data, self.pos)[0]
-        self.pos += 4
-        return float(v)
-
-    def read_bool_aligned(self) -> bool:
-        # Unity serializes bool as 1 byte then aligns the cursor up to the
-        # next 4-byte boundary.
-        v = self.data[self.pos] != 0
-        self.pos += 1
-        rem = self.pos % 4
-        if rem != 0:
-            self.pos += 4 - rem
-        return v
-
-    def read_pptr(self) -> PPtr:
-        fid = self.read_int32()
-        pid = self.read_int64()
-        return PPtr(file_id=fid, path_id=pid)
-
-    def read_vector2(self) -> tuple[float, float]:
-        return (self.read_float(), self.read_float())
-
-    def read_vector3(self) -> tuple[float, float, float]:
-        return (self.read_float(), self.read_float(), self.read_float())
 
 
 class ObjectReaderAsPPtr:
@@ -180,7 +127,7 @@ def script_class(reader: Any) -> str:
 
 @dataclass(frozen=True)
 class ClutterInstance:
-    """A single per-instance TRS from a Model.transforms list (40 bytes)."""
+    """A single per-instance TRS from a Model.transforms list."""
 
     initialized: bool
     position: tuple[float, float, float]
@@ -210,8 +157,7 @@ class ParsedClutterTransforms:
     use_indirect_instancing: bool
     use_heightmap: bool
     use_world_tiling: bool
-    # TilingProperties — fields are present in the binary even when
-    # use_world_tiling is False.
+    # TilingProperties (nested in C#).
     tiling_non_uniform_size: bool
     tiling_zone_size: float
     tiling_zone_size_2d: tuple[float, float]
@@ -234,122 +180,78 @@ class ParsedClutterTransforms:
     selected_index: int
 
 
-_MB_HEADER_SIZE = 32  # m_GameObject(12) + m_Enabled aligned(4) + m_Script(12) + m_Name length-0(4)
+def _adapt_pptr(d: dict[str, Any]) -> PPtr:
+    return PPtr(file_id=int(d["m_FileID"]), path_id=int(d["m_PathID"]))
 
 
-def _read_clutter_instance(r: Reader) -> ClutterInstance:
+def _adapt_clutter_instance(d: dict[str, Any]) -> ClutterInstance:
+    pos, rot, scl = d["position"], d["rotation"], d["scale"]
     return ClutterInstance(
-        initialized=r.read_bool_aligned(),
-        position=r.read_vector3(),
-        rotation_euler=r.read_vector3(),
-        scale=r.read_vector3(),
+        initialized=bool(d["initialized"]),
+        position=(float(pos["x"]), float(pos["y"]), float(pos["z"])),
+        rotation_euler=(float(rot["x"]), float(rot["y"]), float(rot["z"])),
+        scale=(float(scl["x"]), float(scl["y"]), float(scl["z"])),
     )
 
 
-def parse_clutter_transforms(raw: bytes) -> ParsedClutterTransforms:
-    """Hand-parse a ClutterTransforms MonoBehaviour body.
+def parse_clutter_transforms(
+    env: Any,
+    obj: Any,
+) -> ParsedClutterTransforms:
+    """Decode a ClutterTransforms MonoBehaviour into the dataclass shape."""
+    from pinacotheca.typetree import decode_monobehaviour
 
-    Asserts at end-of-parse that the consumed byte count matches the body
-    length. A drift between this layout and the asset bundle's actual
-    layout (e.g. a future game patch adding a [SerializeField]) fails
-    loudly with a clear delta rather than returning silently corrupted
-    data.
-    """
-    r = Reader(raw, offset=_MB_HEADER_SIZE)
+    d = decode_monobehaviour(env, obj, "ClutterTransforms")
+    tp = d["tilingProperties"]
+    tzs2d = tp["tilingZoneSize2D"]
+    tms2d = tp["maskSize2D"]
+    toie = tp["tilingOffsetInEditor"]
 
-    fade_out_when_occupied = r.read_bool_aligned()
-    use_static_batching = r.read_bool_aligned()
-    use_indirect_instancing = r.read_bool_aligned()
-    use_heightmap = r.read_bool_aligned()
-    use_world_tiling = r.read_bool_aligned()
-
-    tiling_non_uniform_size = r.read_bool_aligned()
-    tiling_zone_size = r.read_float()
-    tiling_zone_size_2d = r.read_vector2()
-    tiling_mask = r.read_pptr()
-    tiling_mask_breakpoint = r.read_float()
-    tiling_non_uniform_mask_scale = r.read_bool_aligned()
-    tiling_mask_size = r.read_float()
-    tiling_mask_size_2d = r.read_vector2()
-    tiling_mask_channel = r.read_int32()
-    tiling_apply_mask_in_editor = r.read_bool_aligned()
-    tiling_preview_mask = r.read_bool_aligned()
-    tiling_hide_tiled_copies_in_editor = r.read_bool_aligned()
-    tiling_use_world_position_for_offset_in_editor = r.read_bool_aligned()
-    tiling_offset_in_editor = r.read_vector2()
-
-    override_material = r.read_pptr()
-    clutter_type = r.read_int32()
-
-    models_count = r.read_int32()
-    if models_count < 0 or models_count > 100_000:
-        raise ValueError(f"Implausible ClutterTransforms.models count: {models_count}")
     models: list[ClutterModel] = []
-    for _ in range(models_count):
-        m_initialized = r.read_bool_aligned()
-        mesh = r.read_pptr()
-        material = r.read_pptr()
-        mesh_transform = _read_clutter_instance(r)
-        atlas_index = r.read_int32()
-        instances_count = r.read_int32()
-        if instances_count < 0 or instances_count > 1_000_000:
-            raise ValueError(f"Implausible Model.transforms count: {instances_count}")
-        instances = tuple(_read_clutter_instance(r) for _ in range(instances_count))
-        ignore_heightmap = r.read_bool_aligned()
-        use_procedural_damage = r.read_bool_aligned()
-        clutter_override = r.read_int32()
-        lod_quality_level = r.read_int32()
-        show = r.read_bool_aligned()
+    for md in d["models"]:
         models.append(
             ClutterModel(
-                initialized=m_initialized,
-                mesh=mesh,
-                material=material,
-                mesh_transform=mesh_transform,
-                atlas_index=atlas_index,
-                instances=instances,
-                ignore_heightmap=ignore_heightmap,
-                use_procedural_damage=use_procedural_damage,
-                clutter_override=clutter_override,
-                lod_quality_level=lod_quality_level,
-                show=show,
+                initialized=bool(md["initialized"]),
+                mesh=_adapt_pptr(md["mesh"]),
+                material=_adapt_pptr(md["material"]),
+                mesh_transform=_adapt_clutter_instance(md["meshTransform"]),
+                atlas_index=int(md["atlasIndex"]),
+                instances=tuple(_adapt_clutter_instance(t) for t in md["transforms"]),
+                ignore_heightmap=bool(md["ignoreHeightmap"]),
+                use_procedural_damage=bool(md["useProceduralDamage"]),
+                clutter_override=int(md["clutterOverride"]),
+                lod_quality_level=int(md["lodQualityLevel"]),
+                show=bool(md["show"]),
             )
         )
 
-    gizmo_radius = r.read_float()
-    selected_index = r.read_int32()
-
-    if r.pos != len(raw):
-        raise ValueError(
-            f"ClutterTransforms parse consumed {r.pos} bytes but body is {len(raw)} "
-            f"(delta={r.pos - len(raw)}). Field layout may have drifted."
-        )
-
     return ParsedClutterTransforms(
-        fade_out_when_occupied=fade_out_when_occupied,
-        use_static_batching=use_static_batching,
-        use_indirect_instancing=use_indirect_instancing,
-        use_heightmap=use_heightmap,
-        use_world_tiling=use_world_tiling,
-        tiling_non_uniform_size=tiling_non_uniform_size,
-        tiling_zone_size=tiling_zone_size,
-        tiling_zone_size_2d=tiling_zone_size_2d,
-        tiling_mask=tiling_mask,
-        tiling_mask_breakpoint=tiling_mask_breakpoint,
-        tiling_non_uniform_mask_scale=tiling_non_uniform_mask_scale,
-        tiling_mask_size=tiling_mask_size,
-        tiling_mask_size_2d=tiling_mask_size_2d,
-        tiling_mask_channel=tiling_mask_channel,
-        tiling_apply_mask_in_editor=tiling_apply_mask_in_editor,
-        tiling_preview_mask=tiling_preview_mask,
-        tiling_hide_tiled_copies_in_editor=tiling_hide_tiled_copies_in_editor,
-        tiling_use_world_position_for_offset_in_editor=tiling_use_world_position_for_offset_in_editor,
-        tiling_offset_in_editor=tiling_offset_in_editor,
-        override_material=override_material,
-        clutter_type=clutter_type,
+        fade_out_when_occupied=bool(d["fadeOutWhenOccupied"]),
+        use_static_batching=bool(d["useStaticBatching"]),
+        use_indirect_instancing=bool(d["useIndirectInstancing"]),
+        use_heightmap=bool(d["useHeightmap"]),
+        use_world_tiling=bool(d["useWorldTiling"]),
+        tiling_non_uniform_size=bool(tp["nonUniformSize"]),
+        tiling_zone_size=float(tp["tilingZoneSize"]),
+        tiling_zone_size_2d=(float(tzs2d["x"]), float(tzs2d["y"])),
+        tiling_mask=_adapt_pptr(tp["mask"]),
+        tiling_mask_breakpoint=float(tp["maskBreakpoint"]),
+        tiling_non_uniform_mask_scale=bool(tp["nonUniformMaskScale"]),
+        tiling_mask_size=float(tp["maskSize"]),
+        tiling_mask_size_2d=(float(tms2d["x"]), float(tms2d["y"])),
+        tiling_mask_channel=int(tp["maskChannel"]),
+        tiling_apply_mask_in_editor=bool(tp["applyMaskInEditor"]),
+        tiling_preview_mask=bool(tp["previewMask"]),
+        tiling_hide_tiled_copies_in_editor=bool(tp["hideTiledCopiesInEditor"]),
+        tiling_use_world_position_for_offset_in_editor=bool(
+            tp["useWorldPositionForOffsetInEditor"]
+        ),
+        tiling_offset_in_editor=(float(toie["x"]), float(toie["y"])),
+        override_material=_adapt_pptr(d["overrideMaterial"]),
+        clutter_type=int(d["clutterType"]),
         models=tuple(models),
-        gizmo_radius=gizmo_radius,
-        selected_index=selected_index,
+        gizmo_radius=float(d["gizmoRadius"]),
+        selected_index=int(d["selectedIndex"]),
     )
 
 
@@ -460,11 +362,10 @@ def find_clutter_transforms_in_prefab(
             if cls != "ClutterTransforms":
                 continue
             try:
-                raw = r.get_raw_data()
+                parsed = parse_clutter_transforms(r.assets_file.parent, r)
             except Exception as e:
-                logger.warning("ClutterTransforms get_raw_data failed: %s", e)
+                logger.warning("ClutterTransforms decode failed: %s", e)
                 continue
-            parsed = parse_clutter_transforms(raw)
             found.append((parsed, world))
     return found
 

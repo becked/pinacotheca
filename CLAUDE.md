@@ -83,7 +83,8 @@ src/pinacotheca/
 ├── atlas.py                 # Texture atlas generation
 ├── asset_index.py           # XML chain parser (improvement → assetVariation → asset)
 ├── biome_base.py            # TERRAIN_TEMPERATE biome base loader for layered renders
-├── clutter_transforms.py    # ClutterTransforms MonoBehaviour parser + expander
+├── clutter_transforms.py    # ClutterTransforms MonoBehaviour decoder + expander
+├── typetree.py              # TypeTreeGenerator setup; routes MonoBehaviour decode through UnityPy
 ├── clutter_culling.py       # RandomStruct + probabilistic clutter cull pass
 ├── layered_render.py        # Biome + PVT + buildings layered orchestrator
 ├── pvt_splats.py            # TerrainTexturePVTSplat parser + texture compositor
@@ -131,7 +132,9 @@ decompiled/           # SYMLINK → decompiled C# assemblies — gitignored, loc
 
 - **`asset_index.py`**: Pure-Python parser for the game's XML asset chain (`improvement.xml` → `assetVariation.xml` → `asset.xml`, plus DLC variants). `load_improvement_assets()` returns one `ImprovementAsset` per unique `zIconName` from improvement.xml; `load_capital_assets()` does the same for `ASSET_VARIATION_CITY_*_CAPITAL` entries; `load_urban_assets()` for per-nation `ASSET_<NATION>_URBAN`; `load_resource_assets()` walks `resource.xml` for tile resources (Horse, Sheep, Wheat, Iron, …). All four return the same `ImprovementAsset` shape so callers can use one render pipeline. `load_urban_renderable_improvements()` filters to improvements eligible for urban-tile composite rendering (bUrban=1 + TerrainValid resolves to TERRAIN_URBAN + not scenario-gated), capturing `<NationPrereq>` (and `<DynastyPrereq>` mapped through a small table) — used by the urban-composite extractor. No UnityPy dependency.
 
-- **`terrain_clutter_splat.py`**: `TerrainClutterSplat` MonoBehaviour parser, prefab walker, and per-channel mask compositor (3-channel image: R=Trees, G=MinorBuildings, B=MajorBuildings, gated by the `clear*` flags). Same hand-parse + body-size-assert pattern as `pvt_splats.py`.
+- **`terrain_clutter_splat.py`**: `TerrainClutterSplat` MonoBehaviour decoder, prefab walker, and per-channel mask compositor (3-channel image: R=Trees, G=MinorBuildings, B=MajorBuildings, gated by the `clear*` flags).
+
+- **`typetree.py`**: TypeTreeGenerator setup — `setup_typetree_generator(env)` attaches a `TypeTreeGenerator(unity_version)` (loaded from `Assembly-CSharp.dll` under the game's `Managed/` dir) to the env so UnityPy's `obj.read_typetree()` works on every MonoBehaviour. Lazy-initialized inside `decode_monobehaviour(env, obj, class_name)`. The four MonoBehaviours we decode (`ClutterTransforms`, `TerrainHeightSplat`, `TerrainTexturePVTSplat`, `TerrainClutterSplat`) each have a `parse_<name>(env, obj) -> dataclass` adapter in their respective module — fields land in PascalCase from the typetree dict, the adapters remap to our snake_case dataclasses. Replaces the old hand-parse + body-budget-assert pattern; layout drift now fails loudly via `KeyError` on a missing/renamed field rather than a byte-count mismatch. See `docs/typetree-migration.md` for the migration history.
 
 - **`clutter_culling.py`**: `RandomStruct` port (Park-Miller LCG from `decompiled/Mohawk.SystemCore/RandomStruct.cs`) + `cull_clutter_against_masks(typed_parts, mask_planes, env)`. Replicates the runtime `ClutterTransformsBackgroundData.PopulateRenderData` cull rule: per instance, sample mask at world XZ for the instance's `TerrainClutterType` channel, drop if value > `RandomStruct(0).next_float()`. Used by the urban-composite extractor.
 
@@ -288,7 +291,7 @@ pinacotheca
 
 ### Sparse capitals + urban tiles via ClutterTransforms
 
-The 7 sparse base-game capitals (Greece, Rome, Persia, Carthage, Babylonia, Assyria, Egypt), every per-nation urban tile, and several improvements (Farm, Mine, Pasture, Camp, Grove, City_Site, Outpost_Ruins) carry their visible 3D content in a `ClutterTransforms` MonoBehaviour rather than a `MeshFilter` tree. `src/pinacotheca/clutter_transforms.py` hand-parses the MonoBehaviour body against the field layout from the decompiled C# (no embedded TypeTree), expands each `(model, instance)` pair into a `PrefabPart` at `parent_world @ instance.TRS`, and feeds the same `bake_to_obj` + `render_mesh_to_image` pipeline as everything else. End-of-parse byte-budget assertion fails loudly on layout drift across game versions. See `docs/runtime-composed-cities.md` for the field layout and investigation history.
+The 7 sparse base-game capitals (Greece, Rome, Persia, Carthage, Babylonia, Assyria, Egypt), every per-nation urban tile, and several improvements (Farm, Mine, Pasture, Camp, Grove, City_Site, Outpost_Ruins) carry their visible 3D content in a `ClutterTransforms` MonoBehaviour rather than a `MeshFilter` tree. `src/pinacotheca/clutter_transforms.py` decodes the MonoBehaviour body via the typetree path (see `typetree.py`), expands each `(model, instance)` pair into a `PrefabPart` at `parent_world @ instance.TRS`, and feeds the same `bake_to_obj` + `render_mesh_to_image` pipeline as everything else. See `docs/runtime-composed-cities.md` for the field layout and investigation history; `docs/typetree-migration.md` for the migration that replaced the hand parser.
 
 ### What's NOT extracted
 

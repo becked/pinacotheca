@@ -1,4 +1,4 @@
-"""TerrainTexturePVTSplat / TerrainHeightSplat binary parsers, prefab walker,
+"""TerrainTexturePVTSplat / TerrainHeightSplat decoders, prefab walker,
 and per-plane albedo×alpha texture compositor.
 
 Old World authors per-nation ground decoration (Egyptian sand roads, Greek
@@ -8,12 +8,8 @@ Quad/Plane meshes inside each capital/urban prefab. At runtime the game's
 orthographic top-down camera; for our offline icon path we render each
 plane as its own textured quad and composite them in PIL.
 
-The MonoBehaviour body has no embedded TypeTree, so we hand-parse the
-binary against the field layout from `decompiled/Assembly-CSharp/
-TerrainTexturePVTSplat.cs` and `TerrainHeightSplat.cs`. Both end with a
-body-size assertion that fails loudly if the layout drifts.
-
-Mirrors `clutter_transforms.py` style and reuses its Unity-binary helpers.
+MonoBehaviour decode goes through `pinacotheca.typetree` (TypeTreeGenerator
+reads the field layout from Assembly-CSharp.dll on demand).
 """
 
 from __future__ import annotations
@@ -28,7 +24,6 @@ from PIL import Image
 
 from pinacotheca.clutter_transforms import (
     PPtr,
-    Reader,
     _resolve_pptr_to_reader,
     _walk_prefab_with_world,
     script_class,
@@ -49,12 +44,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class PVTSplatFields:
-    """Parsed body of a TerrainTexturePVTSplat MonoBehaviour.
-
-    Field order matches the binary layout (TerrainSplatBase.sortingOffset
-    first, then TerrainTexturePVTSplat-derived fields in declaration order).
-    Body length is 180 bytes after the 32-byte MonoBehaviour header.
-    """
+    """Decoded body of a TerrainTexturePVTSplat MonoBehaviour."""
 
     sorting_offset: int
     pack_in_atlas: bool
@@ -81,11 +71,7 @@ class PVTSplatFields:
 
 @dataclass(frozen=True)
 class HeightSplatFields:
-    """Parsed body of a TerrainHeightSplat MonoBehaviour.
-
-    Body length is 64 bytes after the 32-byte MonoBehaviour header (plus the
-    4-byte sortingOffset inherited from TerrainSplatBase).
-    """
+    """Decoded body of a TerrainHeightSplat MonoBehaviour."""
 
     sorting_offset: int
     use_simple_mode: bool
@@ -116,119 +102,68 @@ class PvtPlanePart:
 
 
 # ============================================================
-# Binary parsers
+# Decoders
 # ============================================================
 
 
-_MB_HEADER_SIZE = 32  # m_GameObject(12) + m_Enabled aligned(4) + m_Script(12) + m_Name length-0(4)
+def _adapt_pptr(d: dict[str, Any]) -> PPtr:
+    return PPtr(file_id=int(d["m_FileID"]), path_id=int(d["m_PathID"]))
 
 
-def parse_pvt_splat(raw: bytes) -> PVTSplatFields:
-    """Hand-parse a TerrainTexturePVTSplat MonoBehaviour body.
+def parse_pvt_splat(env: Any, obj: Any) -> PVTSplatFields:
+    """Decode a TerrainTexturePVTSplat MonoBehaviour into the dataclass shape."""
+    from pinacotheca.typetree import decode_monobehaviour
 
-    Asserts at end-of-parse that the consumed byte count matches the body
-    length. A drift between this layout and the asset bundle's actual
-    layout (e.g. a future game patch adding a [SerializeField]) fails
-    loudly with a clear delta rather than returning silently corrupted
-    data.
-    """
-    r = Reader(raw, offset=_MB_HEADER_SIZE)
-
-    sorting_offset = r.read_int32()
-    pack_in_atlas = r.read_bool_aligned()
-    albedo_atlas = r.read_pptr()
-    alpha_atlas = r.read_pptr()
-    normal_metalic_roughness_atlas = r.read_pptr()
-    use_simple_mode = r.read_bool_aligned()
-    material = r.read_pptr()
-    material_use_world_uvs = r.read_bool_aligned()
-    material_tiling = r.read_float()
-    albedo_map = r.read_pptr()
-    normal_map = r.read_pptr()
-    metallic_map = r.read_pptr()
-    roughness_map = r.read_pptr()
-    alpha_map = r.read_pptr()
-    alpha_map_channel = r.read_int32()
-    albedo_tint = (r.read_float(), r.read_float(), r.read_float(), r.read_float())
-    normal_map_intensity = r.read_float()
-    metallic = r.read_float()
-    roughness = r.read_float()
-    atlas_index = r.read_int32()
-    texture_array_indices = (
-        r.read_float(),
-        r.read_float(),
-        r.read_float(),
-        r.read_float(),
-    )
-
-    if r.pos != len(raw):
-        raise ValueError(
-            f"TerrainTexturePVTSplat parse consumed {r.pos} bytes but body is {len(raw)} "
-            f"(delta={r.pos - len(raw)}). Field layout may have drifted."
-        )
-
+    d = decode_monobehaviour(env, obj, "TerrainTexturePVTSplat")
+    tint = d["albedoTint"]
+    tai = d["textureArrayIndices"]
     return PVTSplatFields(
-        sorting_offset=sorting_offset,
-        pack_in_atlas=pack_in_atlas,
-        albedo_atlas=albedo_atlas,
-        alpha_atlas=alpha_atlas,
-        normal_metalic_roughness_atlas=normal_metalic_roughness_atlas,
-        use_simple_mode=use_simple_mode,
-        material=material,
-        material_use_world_uvs=material_use_world_uvs,
-        material_tiling=material_tiling,
-        albedo_map=albedo_map,
-        normal_map=normal_map,
-        metallic_map=metallic_map,
-        roughness_map=roughness_map,
-        alpha_map=alpha_map,
-        alpha_map_channel=alpha_map_channel,
-        albedo_tint=albedo_tint,
-        normal_map_intensity=normal_map_intensity,
-        metallic=metallic,
-        roughness=roughness,
-        atlas_index=atlas_index,
-        texture_array_indices=texture_array_indices,
+        sorting_offset=int(d["sortingOffset"]),
+        pack_in_atlas=bool(d["packInAtlas"]),
+        albedo_atlas=_adapt_pptr(d["albedoAtlas"]),
+        alpha_atlas=_adapt_pptr(d["alphaAtlas"]),
+        normal_metalic_roughness_atlas=_adapt_pptr(d["normalMetalicRoughnessAtlas"]),
+        use_simple_mode=bool(d["useSimpleMode"]),
+        material=_adapt_pptr(d["material"]),
+        material_use_world_uvs=bool(d["materialUseWorldUVs"]),
+        material_tiling=float(d["materialTiling"]),
+        albedo_map=_adapt_pptr(d["albedoMap"]),
+        normal_map=_adapt_pptr(d["normalMap"]),
+        metallic_map=_adapt_pptr(d["metallicMap"]),
+        roughness_map=_adapt_pptr(d["roughnessMap"]),
+        alpha_map=_adapt_pptr(d["alphaMap"]),
+        alpha_map_channel=int(d["alphaMapChannel"]),
+        albedo_tint=(float(tint["r"]), float(tint["g"]), float(tint["b"]), float(tint["a"])),
+        normal_map_intensity=float(d["normalMapIntensity"]),
+        metallic=float(d["metallic"]),
+        roughness=float(d["roughness"]),
+        atlas_index=int(d["atlasIndex"]),
+        texture_array_indices=(
+            float(tai["x"]),
+            float(tai["y"]),
+            float(tai["z"]),
+            float(tai["w"]),
+        ),
     )
 
 
-def parse_height_splat(raw: bytes) -> HeightSplatFields:
-    """Hand-parse a TerrainHeightSplat MonoBehaviour body.
+def parse_height_splat(env: Any, obj: Any) -> HeightSplatFields:
+    """Decode a TerrainHeightSplat MonoBehaviour into the dataclass shape."""
+    from pinacotheca.typetree import decode_monobehaviour
 
-    Same body-size assertion as `parse_pvt_splat`. We don't render height
-    splats but we parse them as a side-effect drift check — callers may
-    pass any TerrainHeightSplat encountered during the prefab walk.
-    """
-    r = Reader(raw, offset=_MB_HEADER_SIZE)
-
-    sorting_offset = r.read_int32()
-    use_simple_mode = r.read_bool_aligned()
-    material = r.read_pptr()
-    override_world_uv = r.read_bool_aligned()
-    intensity = r.read_float()
-    tiling = r.read_float()
-    rgb_heightmap_middle = r.read_float()
-    alphamap_scale_bias = (r.read_float(), r.read_float())
-    rgb_heightmap = r.read_pptr()
-    heightmap = r.read_pptr()
-
-    if r.pos != len(raw):
-        raise ValueError(
-            f"TerrainHeightSplat parse consumed {r.pos} bytes but body is {len(raw)} "
-            f"(delta={r.pos - len(raw)}). Field layout may have drifted."
-        )
-
+    d = decode_monobehaviour(env, obj, "TerrainHeightSplat")
+    bias = d["alphamapScaleBias"]
     return HeightSplatFields(
-        sorting_offset=sorting_offset,
-        use_simple_mode=use_simple_mode,
-        material=material,
-        override_world_uv=override_world_uv,
-        intensity=intensity,
-        tiling=tiling,
-        rgb_heightmap_middle=rgb_heightmap_middle,
-        alphamap_scale_bias=alphamap_scale_bias,
-        rgb_heightmap=rgb_heightmap,
-        heightmap=heightmap,
+        sorting_offset=int(d["sortingOffset"]),
+        use_simple_mode=bool(d["useSimpleMode"]),
+        material=_adapt_pptr(d["material"]),
+        override_world_uv=bool(d["overrideWorldUvIsOn"]),
+        intensity=float(d["intensity"]),
+        tiling=float(d["tiling"]),
+        rgb_heightmap_middle=float(d["rgbHeightmapMiddle"]),
+        alphamap_scale_bias=(float(bias["x"]), float(bias["y"])),
+        rgb_heightmap=_adapt_pptr(d["rgbHeightmap"]),
+        heightmap=_adapt_pptr(d["heightmap"]),
     )
 
 
@@ -263,19 +198,17 @@ def find_pvt_splats_in_prefab(root_go: Any) -> list[PvtPlanePart]:
                 continue
             if cls == "TerrainTexturePVTSplat":
                 try:
-                    raw = r.get_raw_data()
+                    pvt_parsed = parse_pvt_splat(r.assets_file.parent, r)
                 except Exception as e:
-                    logger.warning("TerrainTexturePVTSplat get_raw_data failed: %s", e)
+                    logger.warning("TerrainTexturePVTSplat decode failed: %s", e)
                     continue
-                pvt_parsed = parse_pvt_splat(raw)
             elif cls == "TerrainHeightSplat":
                 try:
-                    raw = r.get_raw_data()
+                    # Decode for drift detection; result is discarded.
+                    parse_height_splat(r.assets_file.parent, r)
                 except Exception as e:
-                    logger.warning("TerrainHeightSplat get_raw_data failed: %s", e)
+                    logger.warning("TerrainHeightSplat decode failed: %s", e)
                     continue
-                # Parse for drift detection; result is discarded.
-                parse_height_splat(raw)
 
         if pvt_parsed is None:
             continue

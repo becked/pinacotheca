@@ -1,11 +1,12 @@
-"""Synthetic-bytes tests for the TerrainClutterSplat parser + per-channel
-mask compositor. Hand-builds minimal MonoBehaviour bodies, no game install
-required — CI-safe.
+"""Unit tests for the TerrainClutterSplat per-channel mask compositor.
+
+The MonoBehaviour decoder is exercised by `test_typetree.py` against the
+real game env; these tests cover the in-process compose pass in
+`compose_clutter_mask_texture` (pixel-channel routing, intensity scaling,
+clamping, null-PPtr handling).
 """
 
 from __future__ import annotations
-
-import struct
 
 import numpy as np
 import pytest
@@ -15,137 +16,7 @@ from pinacotheca.terrain_clutter_splat import (
     ClutterMaskPart,
     TerrainClutterSplatFields,
     compose_clutter_mask_texture,
-    parse_terrain_clutter_splat,
 )
-
-
-def _bool_aligned(b: bool) -> bytes:
-    return bytes([1 if b else 0]) + b"\x00\x00\x00"
-
-
-def _i32(v: int) -> bytes:
-    return struct.pack("<i", v)
-
-
-def _f32(v: float) -> bytes:
-    return struct.pack("<f", v)
-
-
-def _pptr(file_id: int, path_id: int) -> bytes:
-    return struct.pack("<iq", file_id, path_id)
-
-
-def _build_clutter_splat_bytes(
-    *,
-    sorting_offset: int = 12,
-    use_simple_mode: bool = True,
-    material: tuple[int, int] = (0, 383),
-    cluttermask: tuple[int, int] = (0, 2312),
-    override_alphamap_use_world_uvs_on: bool = False,
-    clutter_mask_channel: int = 2,
-    alphamask: tuple[int, int] = (0, 0),
-    clear_trees: bool = False,
-    clear_minor_buildings: bool = True,
-    clear_major_buildings: bool = False,
-    clutter_intensity: float = 1.0,
-    tiling: float = 1.0,
-) -> bytes:
-    body = (
-        _i32(sorting_offset)
-        + _bool_aligned(use_simple_mode)
-        + _pptr(*material)
-        + _pptr(*cluttermask)
-        + _bool_aligned(override_alphamap_use_world_uvs_on)
-        + _i32(clutter_mask_channel)
-        + _pptr(*alphamask)
-        + _bool_aligned(clear_trees)
-        + _bool_aligned(clear_minor_buildings)
-        + _bool_aligned(clear_major_buildings)
-        + _f32(clutter_intensity)
-        + _f32(tiling)
-    )
-    return b"\x00" * 32 + body
-
-
-def test_round_trip_recovers_all_fields() -> None:
-    """Hand-built 72-byte body parses back to the exact field values.
-    Values mirror what we observed on the Library Clutter-Mask plane."""
-    raw = _build_clutter_splat_bytes(
-        sorting_offset=12,
-        use_simple_mode=True,
-        material=(0, 383),
-        cluttermask=(0, 2312),
-        clutter_mask_channel=2,
-        clear_trees=False,
-        clear_minor_buildings=True,
-        clear_major_buildings=False,
-        clutter_intensity=1.0,
-        tiling=1.0,
-    )
-    assert len(raw) == 32 + 72  # header + body
-    f = parse_terrain_clutter_splat(raw)
-    assert f.sorting_offset == 12
-    assert f.use_simple_mode is True
-    assert f.material.path_id == 383
-    assert f.cluttermask.path_id == 2312
-    assert f.override_alphamap_use_world_uvs_on is False
-    assert f.clutter_mask_channel == 2
-    assert f.alphamask.is_null()
-    assert f.clear_trees is False
-    assert f.clear_minor_buildings is True
-    assert f.clear_major_buildings is False
-    assert f.clutter_intensity == pytest.approx(1.0)
-    assert f.tiling == pytest.approx(1.0)
-
-
-def test_byte_budget_mismatch_raises() -> None:
-    """Trailing extra bytes (a future game patch adding a [SerializeField])
-    must fail loudly rather than return silently corrupted data."""
-    raw = _build_clutter_splat_bytes() + b"\x00\x00\x00\x00"
-    with pytest.raises(ValueError, match="raw length"):
-        parse_terrain_clutter_splat(raw)
-
-
-def test_short_body_raises() -> None:
-    """Body shorter than expected (e.g. a removed field) must also fail."""
-    raw = _build_clutter_splat_bytes()
-    truncated = raw[:-4]  # drop trailing tiling float
-    with pytest.raises((ValueError, IndexError, struct.error)):
-        parse_terrain_clutter_splat(truncated)
-
-
-def test_each_clear_flag_round_trips_independently() -> None:
-    """The three `clear*` flags are separate Unity-serialized bools, each
-    consuming 4 bytes (1 byte value + 3 pad). Confirm the layout doesn't
-    pack them — flipping each independently must round-trip."""
-    for trees, minor, major in [
-        (True, False, False),
-        (False, True, False),
-        (False, False, True),
-        (True, True, True),
-        (False, False, False),
-    ]:
-        raw = _build_clutter_splat_bytes(
-            clear_trees=trees,
-            clear_minor_buildings=minor,
-            clear_major_buildings=major,
-        )
-        f = parse_terrain_clutter_splat(raw)
-        assert f.clear_trees is trees
-        assert f.clear_minor_buildings is minor
-        assert f.clear_major_buildings is major
-
-
-def test_channel_values_round_trip() -> None:
-    """clutter_mask_channel is the ColorChannel enum int (0=R, 1=G, 2=B, 3=A).
-    Verify each value parses cleanly so the compositor can index correctly."""
-    for channel in (0, 1, 2, 3):
-        raw = _build_clutter_splat_bytes(clutter_mask_channel=channel)
-        f = parse_terrain_clutter_splat(raw)
-        assert f.clutter_mask_channel == channel
-
-
-# ---- compose_clutter_mask_texture ----
 
 
 def _make_part(

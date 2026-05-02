@@ -113,14 +113,9 @@ def find_height_splats_in_prefab(root_go: Any) -> list[HeightSplatPart]:
             if cls != "TerrainHeightSplat":
                 continue
             try:
-                raw = r.get_raw_data()
+                height_parsed = parse_height_splat(r.assets_file.parent, r)
             except Exception as e:
-                logger.warning("TerrainHeightSplat get_raw_data failed: %s", e)
-                continue
-            try:
-                height_parsed = parse_height_splat(raw)
-            except ValueError as e:
-                logger.warning("TerrainHeightSplat parse failed: %s", e)
+                logger.warning("TerrainHeightSplat decode failed: %s", e)
                 continue
             break  # one TerrainHeightSplat per GameObject
 

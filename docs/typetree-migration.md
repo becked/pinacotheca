@@ -2,10 +2,17 @@
 
 ## Status
 
-**Not started.** This doc captures a plan worth executing. There's no
-deadline; the trigger is "next time a game patch breaks one of our
-hand-parsers." When that happens, follow this plan instead of patching
-the parser by hand again.
+**Complete.** The spike (`typetree-spike-findings.md`) found a much
+simpler path than this doc originally proposed: UnityPy ships
+first-class integration with `TypeTreeGeneratorAPI` (a pip-installable
+Python package, same author as UnityPy, cross-platform wheels), so the
+.NET-tool-plus-committed-JSON workflow described below was replaced by
+in-process generation at extraction time. See `src/pinacotheca/typetree.py`
+for the loader and the per-class `parse_*(env, obj)` functions in
+`clutter_transforms.py`, `pvt_splats.py`, and `terrain_clutter_splat.py`.
+
+The historical plan below remains as institutional memory of the
+original analysis.
 
 ## Motivation
 

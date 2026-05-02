@@ -1,4 +1,4 @@
-"""TerrainClutterSplat binary parser, prefab walker, and per-channel mask
+"""TerrainClutterSplat decoder, prefab walker, and per-channel mask
 texture compositor.
 
 When the game places an improvement on a city's urban tile, the improvement
@@ -12,7 +12,7 @@ clutter then samples the mask at its world position for its own
 `ClutterMaskable.cs`, and `ClutterTransformsBackgroundData.cs:158-162`.
 
 For our offline composites we replicate that flow:
-  1. Parse each `TerrainClutterSplat` body (`parse_terrain_clutter_splat`).
+  1. Decode each `TerrainClutterSplat` body (`parse_terrain_clutter_splat`).
   2. Walk the improvement prefab to find every plane
      (`find_terrain_clutter_splats_in_prefab`).
   3. Compose a 3-channel mask texture per plane where R/G/B encode the
@@ -23,14 +23,7 @@ For our offline composites we replicate that flow:
      instance's world XZ into mask UV, samples the channel for its
      resolved `TerrainClutterType`, and applies the random-compare rule.
 
-The MonoBehaviour body has no embedded TypeTree, so we hand-parse the
-binary against the field layout from `TerrainClutterSplat.cs`. Verified
-on Library + Palace prefabs: body is exactly 72 bytes (Unity serializes
-each public bool as 1 byte then aligns to 4, so the three `clear*` flags
-contribute 12 bytes). End-of-parse assertion fails loudly if a future
-patch reorders fields.
-
-Mirrors `pvt_splats.py` structure and reuses its Unity-binary helpers.
+MonoBehaviour decode goes through `pinacotheca.typetree`.
 """
 
 from __future__ import annotations
@@ -45,7 +38,6 @@ from PIL import Image
 
 from pinacotheca.clutter_transforms import (
     PPtr,
-    Reader,
     _resolve_pptr_to_reader,
     _walk_prefab_with_world,
     script_class,
@@ -66,12 +58,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class TerrainClutterSplatFields:
-    """Parsed body of a TerrainClutterSplat MonoBehaviour.
-
-    Field order matches the binary layout: `TerrainSplatBase.sortingOffset`
-    first, then the `TerrainClutterSplat`-derived fields in C# declaration
-    order. Body length is 72 bytes after the 32-byte MonoBehaviour header.
-    """
+    """Decoded body of a TerrainClutterSplat MonoBehaviour."""
 
     sorting_offset: int
     use_simple_mode: bool
@@ -104,64 +91,35 @@ class ClutterMaskPart:
 
 
 # ============================================================
-# Binary parser
+# Decoder
 # ============================================================
 
 
-_MB_HEADER_SIZE = 32  # m_GameObject(12) + m_Enabled aligned(4) + m_Script(12) + m_Name length-0(4)
-_BODY_SIZE = 72
+def _adapt_pptr(d: dict[str, Any]) -> PPtr:
+    return PPtr(file_id=int(d["m_FileID"]), path_id=int(d["m_PathID"]))
 
 
-def parse_terrain_clutter_splat(raw: bytes) -> TerrainClutterSplatFields:
-    """Hand-parse a TerrainClutterSplat MonoBehaviour body.
+def parse_terrain_clutter_splat(
+    env: Any,
+    obj: Any,
+) -> TerrainClutterSplatFields:
+    """Decode a TerrainClutterSplat MonoBehaviour into the dataclass shape."""
+    from pinacotheca.typetree import decode_monobehaviour
 
-    Asserts at end-of-parse that the consumed byte count matches the
-    expected body length. A drift between this layout and the asset
-    bundle's actual layout (e.g. a future game patch adding a
-    [SerializeField]) fails loudly with a clear delta rather than
-    returning silently corrupted data.
-    """
-    r = Reader(raw, offset=_MB_HEADER_SIZE)
-
-    sorting_offset = r.read_int32()
-    use_simple_mode = r.read_bool_aligned()
-    material = r.read_pptr()
-    cluttermask = r.read_pptr()
-    override_alphamap_use_world_uvs_on = r.read_bool_aligned()
-    clutter_mask_channel = r.read_int32()
-    alphamask = r.read_pptr()
-    clear_trees = r.read_bool_aligned()
-    clear_minor_buildings = r.read_bool_aligned()
-    clear_major_buildings = r.read_bool_aligned()
-    clutter_intensity = r.read_float()
-    tiling = r.read_float()
-
-    consumed = r.pos - _MB_HEADER_SIZE
-    if consumed != _BODY_SIZE:
-        raise ValueError(
-            f"TerrainClutterSplat parse consumed {consumed} body bytes but expected "
-            f"{_BODY_SIZE} (delta={consumed - _BODY_SIZE}). Field layout may have drifted."
-        )
-    if r.pos != len(raw):
-        raise ValueError(
-            f"TerrainClutterSplat raw length {len(raw)} does not match header+body "
-            f"({_MB_HEADER_SIZE} + {_BODY_SIZE} = {_MB_HEADER_SIZE + _BODY_SIZE}); "
-            f"reader stopped at {r.pos}."
-        )
-
+    d = decode_monobehaviour(env, obj, "TerrainClutterSplat")
     return TerrainClutterSplatFields(
-        sorting_offset=sorting_offset,
-        use_simple_mode=use_simple_mode,
-        material=material,
-        cluttermask=cluttermask,
-        override_alphamap_use_world_uvs_on=override_alphamap_use_world_uvs_on,
-        clutter_mask_channel=clutter_mask_channel,
-        alphamask=alphamask,
-        clear_trees=clear_trees,
-        clear_minor_buildings=clear_minor_buildings,
-        clear_major_buildings=clear_major_buildings,
-        clutter_intensity=clutter_intensity,
-        tiling=tiling,
+        sorting_offset=int(d["sortingOffset"]),
+        use_simple_mode=bool(d["useSimpleMode"]),
+        material=_adapt_pptr(d["material"]),
+        cluttermask=_adapt_pptr(d["cluttermask"]),
+        override_alphamap_use_world_uvs_on=bool(d["overrideAlphamapUseWorldUvsOn"]),
+        clutter_mask_channel=int(d["clutterMaskChannel"]),
+        alphamask=_adapt_pptr(d["alphamask"]),
+        clear_trees=bool(d["clearTrees"]),
+        clear_minor_buildings=bool(d["clearMinorBuildings"]),
+        clear_major_buildings=bool(d["clearMajorBuildings"]),
+        clutter_intensity=float(d["clutterIntensity"]),
+        tiling=float(d["tiling"]),
     )
 
 
@@ -194,15 +152,10 @@ def find_terrain_clutter_splats_in_prefab(root_go: Any) -> list[ClutterMaskPart]
             if cls != "TerrainClutterSplat":
                 continue
             try:
-                raw = r.get_raw_data()
-            except Exception as e:
-                logger.warning("TerrainClutterSplat get_raw_data failed: %s", e)
-                continue
-            try:
-                parsed = parse_terrain_clutter_splat(raw)
+                parsed = parse_terrain_clutter_splat(r.assets_file.parent, r)
             except Exception as e:
                 logger.warning(
-                    "TerrainClutterSplat parse failed on %r: %s",
+                    "TerrainClutterSplat decode failed on %r: %s",
                     getattr(go, "m_Name", "?"),
                     e,
                 )
