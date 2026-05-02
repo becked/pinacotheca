@@ -79,6 +79,56 @@ def test_next_float_first_few_are_stable() -> None:
     ]
 
 
+def test_next_int_zero_range_returns_zero() -> None:
+    """RandomStruct.Next(0) is special-cased to return 0 in the C# source."""
+    rs = RandomStruct(0)
+    assert rs.next_int(0) == 0
+    # And does not advance the seed (no NextSeed call in the zero branch).
+    seed_before = rs.seed
+    rs.next_int(0)
+    assert rs.seed == seed_before
+
+
+def test_next_int_stays_in_half_open_range() -> None:
+    rs = RandomStruct(0)
+    for n in [1, 2, 5, 10, 100, 1000]:
+        for _ in range(200):
+            v = rs.next_int(n)
+            assert 0 <= v < n
+
+
+def test_next_int_distribution_is_roughly_uniform() -> None:
+    rs = RandomStruct(0)
+    counts = [0] * 10
+    for _ in range(10_000):
+        counts[rs.next_int(10)] += 1
+    # Every bucket should be hit; chi-square-ish loose bound.
+    assert min(counts) > 700
+    assert max(counts) < 1300
+
+
+def test_range_float_zero_one_matches_next_float() -> None:
+    """Range(0, 1) is algebraically equivalent to NextFloat()."""
+    a, b = RandomStruct(42), RandomStruct(42)
+    for _ in range(50):
+        assert a.range_float(0.0, 1.0) == b.next_float()
+
+
+def test_range_float_stays_in_half_open_range() -> None:
+    rs = RandomStruct(0)
+    for _ in range(1000):
+        v = rs.range_float(-3.5, 7.25)
+        assert -3.5 <= v < 7.25
+
+
+def test_range_float_zero_width_returns_min() -> None:
+    """Range(x, x) collapses to x for any x — the multiplier is 0 regardless
+    of NextFloat."""
+    rs = RandomStruct(0)
+    for _ in range(20):
+        assert rs.range_float(2.5, 2.5) == 2.5
+
+
 # ============================================================
 # Cull pass
 # ============================================================

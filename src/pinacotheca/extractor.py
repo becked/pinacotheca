@@ -812,6 +812,10 @@ def extract_improvement_meshes(
         load_urban_assets,
     )
     from pinacotheca.biome_base import load_biome_base
+    from pinacotheca.clutter_spawner import (
+        clutter_spawner_to_prefab_parts,
+        find_clutter_spawners_in_prefab,
+    )
     from pinacotheca.clutter_transforms import (
         clutter_to_prefab_parts,
         find_clutter_transforms_in_prefab,
@@ -1096,6 +1100,32 @@ def extract_improvement_meshes(
                 print(
                     f"  [CT] {output_name} - {len(cts)} ClutterTransforms, "
                     f"{total_models} models, {total_instances} instances"
+                )
+
+            # ClutterSpawner-driven parts: same composition layer as
+            # ClutterTransforms (procedurally laid out at runtime; we
+            # replicate the layout offline). Affects 11 resource prefabs
+            # without any MeshFilter content (Wheat, Iron, Lavender, etc.).
+            try:
+                css = find_clutter_spawners_in_prefab(root_go)
+            except Exception as e:
+                if verbose:
+                    print(f"  [WARN] {output_name} - clutter spawner walk failed: {e}")
+                css = []
+            for parsed_cs, parent_world in css:
+                try:
+                    spawner_parts = clutter_spawner_to_prefab_parts(env, parsed_cs, parent_world)
+                except Exception as e:
+                    if verbose:
+                        print(f"  [WARN] {output_name} - clutter spawner expand failed: {e}")
+                    continue
+                clutter_parts.extend(spawner_parts)
+            if css and verbose:
+                total_models = sum(len(p.models) for p, _ in css)
+                total_instances = sum(sum(m.num_instances for m in p.models) for p, _ in css)
+                print(
+                    f"  [CS] {output_name} - {len(css)} ClutterSpawner, "
+                    f"{total_models} models, {total_instances} target instances"
                 )
 
             if is_resource and is_split and structure is not None:

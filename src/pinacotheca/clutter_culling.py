@@ -87,6 +87,25 @@ class RandomStruct:
     def next_float(self) -> float:
         return float(self.next_seed() & 0xFFFF) / 65536.0
 
+    def next_int(self, max_exclusive: int) -> int:
+        """Port of `RandomStruct.Next(int iRange)` returning a value in
+        `[0, max_exclusive)`. Special-cases `max_exclusive == 0` to `0`.
+
+        The C# `SeedToInt` shifts the post-update seed right by 16 bits
+        before the modulo — note this samples a different bit slice than
+        `next_float`, which masks the low 16 bits. Using `next_int` and
+        `next_float` from the same RandomStruct will therefore advance
+        the seed without correlating their outputs.
+        """
+        if max_exclusive == 0:
+            return 0
+        return (self.next_seed() >> 16) % max_exclusive
+
+    def range_float(self, f_min: float, f_max: float) -> float:
+        """Port of `RandomStruct.Range(float, float)` — uniform in
+        `[f_min, f_max)`. Equivalent to `(f_max - f_min) * next_float() + f_min`."""
+        return (f_max - f_min) * self.next_float() + f_min
+
 
 # ============================================================
 # World XZ → mask UV sampling
