@@ -18,6 +18,7 @@ from pinacotheca.extractor import (
     extract_terrain_tiles,
     extract_unit_meshes,
     extract_urban_composite_meshes,
+    extract_vegetation_meshes,
 )
 from pinacotheca.gallery_filter import GALLERY_EXCLUDE_GLOBS, write_filter_sidecar
 
@@ -86,6 +87,11 @@ Examples:
                 verbose=not args.quiet,
             )
             extract_terrain_tiles(
+                game_data=args.game_data,
+                output_dir=args.output,
+                verbose=not args.quiet,
+            )
+            extract_vegetation_meshes(
                 game_data=args.game_data,
                 output_dir=args.output,
                 verbose=not args.quiet,

@@ -152,6 +152,7 @@ def _stub_model(
     instance_radius: float = 0.0,
     grid_bounds: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0),
     random_seed: int = 7,
+    texture_mask: PPtr = PPtr(file_id=0, path_id=0),  # null by default
 ) -> SpawnerModel:
     return SpawnerModel(
         mesh=PPtr(file_id=0, path_id=100),
@@ -162,7 +163,7 @@ def _stub_model(
         num_instances=num_instances,
         instance_radius=instance_radius,
         grid_bounds=grid_bounds,
-        texture_mask=PPtr(file_id=0, path_id=0),  # null
+        texture_mask=texture_mask,
         texture_channel=3,
         clutter_type=0,
         use_world_randomness=False,
@@ -324,3 +325,105 @@ def test_expander_instance_radius_drops_overlapping_instances() -> None:
     # Without instanceRadius we'd get 20; with radius=1.0 over a 0.5×0.5 grid
     # the second-onwards always collide with the first → exactly 1 kept.
     assert len(parts) == 1
+
+
+# ============================================================
+# apply_texture_mask kwarg
+# ============================================================
+#
+# Vegetation passes `apply_texture_mask=False` to skip the per-tile
+# mask CDF remap (`textureMask.GetInverseDensity`) so trees spread
+# uniformly across the hex via raw Halton. The default is True for
+# the 11 resource prefabs that depend on the mask. These tests verify
+# both branches without needing a real Texture2D.
+
+
+@pytest.mark.usefixtures("stub_resolver")
+def test_apply_texture_mask_false_skips_mask_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When `apply_texture_mask=False`, `_resolve_texture_mask` is not
+    called even if the model has a non-null textureMask PPtr. Sentinel
+    via a fail-loud monkeypatched function."""
+    called = {"n": 0}
+
+    def fail_loud(_env: Any, _pptr: PPtr) -> None:
+        called["n"] += 1
+        raise AssertionError(
+            "_resolve_texture_mask should not be called when apply_texture_mask=False"
+        )
+
+    monkeypatch.setattr("pinacotheca.clutter_spawner._resolve_texture_mask", fail_loud)
+    parsed = ParsedClutterSpawner(
+        use_heightmap=True,
+        hide_instances=False,
+        models=(
+            _stub_model(
+                num_instances=4,
+                # Non-null mask PPtr — would be resolved if the flag were True.
+                texture_mask=PPtr(file_id=0, path_id=999),
+            ),
+        ),
+    )
+    parts = clutter_spawner_to_prefab_parts(
+        env=MagicMock(),
+        parsed=parsed,
+        parent_world=np.eye(4),
+        apply_texture_mask=False,
+    )
+    assert len(parts) == 4
+    assert called["n"] == 0
+
+
+@pytest.mark.usefixtures("stub_resolver")
+def test_apply_texture_mask_default_resolves_mask(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default `apply_texture_mask=True` keeps the resource-prefab
+    behavior: `_resolve_texture_mask` is invoked exactly once per
+    model (even when the PPtr resolves to None and the function
+    returns None silently)."""
+    called = {"n": 0}
+
+    def stub_resolver_fn(_env: Any, _pptr: PPtr) -> None:
+        called["n"] += 1
+        return None  # Mask not present → expander still runs uniform Halton.
+
+    monkeypatch.setattr("pinacotheca.clutter_spawner._resolve_texture_mask", stub_resolver_fn)
+    parsed = ParsedClutterSpawner(
+        use_heightmap=True,
+        hide_instances=False,
+        models=(_stub_model(num_instances=4, texture_mask=PPtr(file_id=0, path_id=999)),),
+    )
+    parts = clutter_spawner_to_prefab_parts(
+        env=MagicMock(),
+        parsed=parsed,
+        parent_world=np.eye(4),
+        # Default — explicit for clarity.
+        apply_texture_mask=True,
+    )
+    assert len(parts) == 4
+    assert called["n"] == 1
+
+
+@pytest.mark.usefixtures("stub_resolver")
+def test_apply_texture_mask_false_preserves_rng_alignment() -> None:
+    """The expander always draws the `next_float()` color-lerp value to
+    keep its RNG sequence aligned with the runtime; toggling
+    `apply_texture_mask` must not shift the per-instance positions.
+    With null mask + flag flip we should see byte-identical world
+    matrices."""
+    parsed = ParsedClutterSpawner(
+        use_heightmap=True,
+        hide_instances=False,
+        models=(_stub_model(num_instances=10, random_seed=12345),),
+    )
+    a = clutter_spawner_to_prefab_parts(
+        env=MagicMock(), parsed=parsed, parent_world=np.eye(4), apply_texture_mask=True
+    )
+    b = clutter_spawner_to_prefab_parts(
+        env=MagicMock(), parsed=parsed, parent_world=np.eye(4), apply_texture_mask=False
+    )
+    assert len(a) == len(b)
+    for pa, pb in zip(a, b, strict=True):
+        np.testing.assert_array_equal(pa.world_matrix, pb.world_matrix)

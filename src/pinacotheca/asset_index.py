@@ -346,6 +346,165 @@ def load_resource_assets(xml_dir: Path) -> list[ImprovementAsset]:
     return out
 
 
+# ============================================================
+# Vegetation chain
+# ============================================================
+#
+# Vegetation prefabs (Trees, Jungle, Scrub, ForestCut, JungleCut +
+# their charred / charred_minor / hurricane variants) live in the same
+# AssetVariation → Asset chain as everything else, but vegetation.xml
+# itself only enumerates the six base types (TREES, TREES_CUT, JUNGLE,
+# JUNGLE_CUT, SCRUB, SCRUB_CUT). The runtime overrides (charred state,
+# hurricane state, per-(terrain, height) variants) are stored as extra
+# AssetVariation entries with name suffixes — `_ARID`, `_HILL`,
+# `_CHARRED`, `_CHARRED_MINOR`, `_HURRICANE`, `_CUT`. We discover the
+# full set by scanning every `ASSET_VARIATION_VEGETATION_*` entry and
+# parsing terrain/height/modifier from the suffix.
+
+
+_VEG_VARIATION_PREFIX = "ASSET_VARIATION_VEGETATION_"
+# Possible suffix tokens on a vegetation variation name, listed by the
+# slot they occupy (terrain, height, modifier). Order within each tuple
+# matters for the suffix parser — longer matches first.
+_VEG_TERRAIN_SUFFIXES: tuple[str, ...] = ("ARID",)
+_VEG_HEIGHT_SUFFIXES: tuple[str, ...] = ("HILL",)
+_VEG_MODIFIER_SUFFIXES: tuple[str, ...] = (
+    "CHARRED_MINOR",
+    "CHARRED",
+    "HURRICANE",
+    "CUT_CHARRED",
+    "CUT",
+)
+
+
+@dataclass(frozen=True)
+class VegetationAsset:
+    """One vegetation variant resolved through the AssetVariation chain.
+
+    `output_name` is the canonical filename stem (sans extension or
+    directory) that the extractor uses: `VEGETATION_3D_<output_name>.png`.
+    For multi-candidate variations (`aiRandomAssets`), `output_name`
+    carries a zero-padded `_NN` suffix matching the candidate index, e.g.
+    `TREES_01`, `JUNGLE_HILL_HURRICANE_01`. Variations whose candidates
+    all resolve to the same prefab are deduped — we emit one PNG per
+    unique prefab, indexed by first appearance.
+
+    `terrain_z_type` and `height_z_type` are extracted from the variation
+    name suffix (default TEMPERATE / FLAT). The extractor uses them to
+    pick the matching biome ground for the layered render. Hill height
+    is recorded but rendered on flat ground in v1 — the 3D peak feature
+    is deferred (see `terrain_render.py` for the per-(biome, height)
+    composition pattern used by terrain tiles).
+    """
+
+    output_name: str  # "TREES_01", "JUNGLE_HILL_HURRICANE", "SCRUB_ARID_CHARRED_MINOR"
+    prefab_name: str  # "Temperate_Tree_01_Cluster_Impostors" — for find_root_gameobject
+    variation_z_type: str  # "ASSET_VARIATION_VEGETATION_TREES" — for diagnostics
+    asset_z_type: str  # "ASSET_VEGETATION_TREES" — for diagnostics
+    terrain_z_type: str  # "TERRAIN_TEMPERATE", "TERRAIN_ARID"
+    height_z_type: str  # "HEIGHT_FLAT", "HEIGHT_HILL"
+
+
+def _parse_vegetation_suffix(rest: str) -> tuple[str, str]:
+    """Extract (terrain_z_type, height_z_type) from a vegetation variation
+    name suffix.
+
+    `rest` is the part after `ASSET_VARIATION_VEGETATION_` (e.g.
+    `TREES_HILL_CHARRED`). We scan for known tokens delimited by `_`:
+    `ARID` → TERRAIN_ARID; `HILL` → HEIGHT_HILL; everything else is
+    a vegetation type or a state modifier (CUT, CHARRED, HURRICANE, etc.)
+    that doesn't affect the underlying terrain/height. Defaults are
+    TEMPERATE + FLAT.
+    """
+    tokens = rest.split("_")
+    terrain = "TERRAIN_TEMPERATE"
+    height = "HEIGHT_FLAT"
+    if "ARID" in tokens:
+        terrain = "TERRAIN_ARID"
+    if "HILL" in tokens:
+        height = "HEIGHT_HILL"
+    return terrain, height
+
+
+def load_vegetation_assets(xml_dir: Path) -> list[VegetationAsset]:
+    """Walk the vegetation slice of the AssetVariation → Asset chain and
+    return one `VegetationAsset` per renderable (variation, candidate)
+    pair, deduped by prefab name within each variation.
+
+    Discovery is variation-driven, not vegetation.xml-driven: we scan
+    every `ASSET_VARIATION_VEGETATION_*` entry, which captures the base
+    types AND every charred / hurricane / per-(terrain, height) override.
+    `aiRandomAssets` variations expand to one entry per unique prefab,
+    each with a `_NN` zero-padded suffix on `output_name`.
+
+    All vegetation lives in the same DLC file lists as improvements
+    (`assetVariation-eoti.xml` adds JUNGLE; `asset-eoti.xml` carries
+    the jungle prefabs). `vegetation.xml` itself has no DLC siblings —
+    EOTI-gated entries (jungle) live in the base file with a
+    `<GameContentDisplay>` tag.
+
+    Returns an empty list if `xml_dir` doesn't exist.
+    """
+    if not xml_dir.exists():
+        logger.warning("XML directory not found: %s", xml_dir)
+        return []
+
+    variations = _build_variation_index(_load_entries(xml_dir, ASSET_VARIATION_FILES))
+    assets = _build_asset_index(_load_entries(xml_dir, ASSET_FILES))
+
+    out: list[VegetationAsset] = []
+    skipped_no_asset = 0
+
+    # Sort for deterministic output order across runs.
+    veg_variation_keys = sorted(k for k in variations if k.startswith(_VEG_VARIATION_PREFIX))
+    for var_z in veg_variation_keys:
+        rest = var_z.removeprefix(_VEG_VARIATION_PREFIX)
+        terrain_z, height_z = _parse_vegetation_suffix(rest)
+        variation = variations[var_z]
+
+        # Dedupe candidates by resolved prefab name within this variation.
+        # Several charred variations point all 3 random candidates at the
+        # same _02 prefab — emitting 3 identical PNGs is wasteful.
+        seen_prefabs: dict[str, int] = {}  # prefab → 1-based index of first appearance
+        candidates_with_prefab: list[tuple[str, str, int]] = []  # (asset_z, prefab, idx)
+        for asset_z, _weight in variation.candidates:
+            prefab = assets.get(asset_z)
+            if not prefab:
+                skipped_no_asset += 1
+                continue
+            if prefab in seen_prefabs:
+                continue
+            idx = len(seen_prefabs) + 1
+            seen_prefabs[prefab] = idx
+            candidates_with_prefab.append((asset_z, prefab, idx))
+
+        if not candidates_with_prefab:
+            continue
+
+        multi = len(candidates_with_prefab) > 1
+        for asset_z, prefab, idx in candidates_with_prefab:
+            output_name = f"{rest}_{idx:02d}" if multi else rest
+            out.append(
+                VegetationAsset(
+                    output_name=output_name,
+                    prefab_name=prefab,
+                    variation_z_type=var_z,
+                    asset_z_type=asset_z,
+                    terrain_z_type=terrain_z,
+                    height_z_type=height_z,
+                )
+            )
+
+    if skipped_no_asset:
+        logger.info(
+            "load_vegetation_assets: %d resolved, %d candidates with no asset",
+            len(out),
+            skipped_no_asset,
+        )
+
+    return out
+
+
 def load_urban_assets(xml_dir: Path) -> list[ImprovementAsset]:
     """
     Discover per-nation urban-tile prefabs by scanning asset.xml directly.

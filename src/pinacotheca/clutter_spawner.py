@@ -29,6 +29,13 @@ that don't matter for offline standalone resource renders:
     instances share the prefab's diffuse texture without sub-rect UVs
     or color jitter.
 
+The `apply_texture_mask` kwarg on `clutter_spawner_to_prefab_parts`
+opts callers out of the per-tile mask CDF remap. Resource prefabs (the
+default) keep the remap so e.g. Iron veins cluster where the authored
+mask says they should. Vegetation prefabs pass `apply_texture_mask=False`
+to spread instances uniformly across the hex (a forest icon should fill
+the tile, not cluster in one corner).
+
 # World matrix composition
 
 Mirrors `clutter_transforms.clutter_to_prefab_parts`:
@@ -234,6 +241,8 @@ def clutter_spawner_to_prefab_parts(
     env: Any,
     parsed: ParsedClutterSpawner,
     parent_world: NDArray[np.float64],
+    *,
+    apply_texture_mask: bool = True,
 ) -> list[PrefabPart]:
     """Expand a parsed ClutterSpawner into one PrefabPart per (model, instance).
 
@@ -244,13 +253,18 @@ def clutter_spawner_to_prefab_parts(
 
     Returns an empty list if `hide_instances` is set or if every model
     is individually hidden / has zero instances.
+
+    Pass `apply_texture_mask=False` to skip the per-tile mask CDF remap
+    (`textureMask.GetInverseDensity`) and use the raw Halton grid. The
+    `rng.next_float()` color-lerp draw still happens to keep the random
+    sequence aligned with the runtime.
     """
     if parsed.hide_instances:
         return []
 
     parts: list[PrefabPart] = []
     for model in parsed.models:
-        parts.extend(_expand_model(env, model, parent_world))
+        parts.extend(_expand_model(env, model, parent_world, apply_texture_mask))
     return parts
 
 
@@ -258,6 +272,7 @@ def _expand_model(
     env: Any,
     model: SpawnerModel,
     parent_world: NDArray[np.float64],
+    apply_texture_mask: bool,
 ) -> list[PrefabPart]:
     if model.hide or model.num_instances <= 0:
         return []
@@ -272,7 +287,7 @@ def _expand_model(
     if mat_reader is not None and mat_reader.type.name == "Material":
         materials.append(ObjectReaderAsPPtr(mat_reader))
 
-    mask = _resolve_texture_mask(env, model.texture_mask)
+    mask = _resolve_texture_mask(env, model.texture_mask) if apply_texture_mask else None
 
     matrix4x = _trs_matrix(model.position, model.rotation_euler, model.scale)
 

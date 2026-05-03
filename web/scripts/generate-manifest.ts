@@ -75,6 +75,7 @@ const CATEGORY_INFO: Record<string, { displayName: string; icon: string }> = {
 	missions: { displayName: 'Missions', icon: '🎯' },
 	projects: { displayName: 'Projects', icon: '🔨' },
 	terrains: { displayName: 'Terrains', icon: '🏔️' },
+	vegetation: { displayName: 'Vegetation', icon: '🌳' },
 	families: { displayName: 'Families', icon: '👨‍👩‍👧' },
 	nations: { displayName: 'Nations', icon: '🏴' },
 	theology: { displayName: 'Theologies', icon: '⛪' },

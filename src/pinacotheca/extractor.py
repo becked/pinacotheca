@@ -1877,3 +1877,299 @@ def extract_terrain_tiles(
 
     finally:
         os.chdir(original_cwd)
+
+
+# ============================================================
+# Vegetation extraction
+# ============================================================
+#
+# Trees / Scrub / Jungle / ForestCut / JungleCut + their charred,
+# charred_minor, and hurricane variants. The asset enumeration comes
+# from `asset_index.load_vegetation_assets`; each prefab is rendered
+# as a layered composite (biome ground + per-prefab PVT splat + clutter
+# on top), keyed on the asset's `(terrain_z_type, height_z_type)`.
+#
+# Differences from `extract_improvement_meshes`:
+#   - All renders are layered; no per-prefab single-render branch.
+#   - Backface culling is OFF (vegetation prefabs are 4-vert quad
+#     billboards with random Y rotation; ~half would render as invisible
+#     slivers with cull on).
+#   - ClutterSpawner expansion uses `apply_texture_mask=False` so
+#     instances spread uniformly over the hex (Halton grid) rather than
+#     clustering per the per-tile mask.
+#   - Hill height variants render on FLAT ground for v1; the 3D peak
+#     feature is deferred (see `terrain_render` for the per-(biome,
+#     height) feature-stacking pattern if anyone picks this up).
+#   - No resource _SOLO/_HERD split; no plinth strip.
+
+VEGETATION_DECODE_BLACKLIST: frozenset[str] = frozenset()
+"""Vegetation prefabs that segfault UnityPy on texture decode. Empty
+today — none observed during inspection. Add prefab names here if a
+future patch breaks one."""
+
+
+def extract_vegetation_meshes(
+    *,
+    game_data: Path | None = None,
+    output_dir: Path | None = None,
+    verbose: bool = True,
+) -> dict[str, int]:
+    """Render every vegetation variant to its own PNG.
+
+    Walks ``asset_index.load_vegetation_assets`` and emits
+    ``extracted/sprites/vegetation/VEGETATION_3D_<NAME>.png`` for each
+    resolved (variation, candidate) pair. Layered composition
+    (biome + PVT splat + clutter) matches the sparse-capital pipeline.
+    Each PNG ships with a ``.json`` sidecar tagged ``composition="layered"``.
+
+    Returns ``{"rendered", "skipped", "errors"}`` counts.
+    """
+    try:
+        import UnityPy
+    except ImportError:
+        if verbose:
+            print("WARNING: UnityPy not installed; vegetation extraction skipped", file=sys.stderr)
+        return {"rendered": 0, "skipped": 0, "errors": 0}
+
+    try:
+        from pinacotheca.render_metadata import write_sidecar
+    except ImportError as e:
+        if verbose:
+            print(f"WARNING: 3D rendering not available ({e})", file=sys.stderr)
+        return {"rendered": 0, "skipped": 0, "errors": 0}
+
+    from pinacotheca.asset_index import load_vegetation_assets
+    from pinacotheca.biome_base import load_biome_base
+    from pinacotheca.clutter_spawner import (
+        clutter_spawner_to_prefab_parts,
+        find_clutter_spawners_in_prefab,
+    )
+    from pinacotheca.clutter_transforms import (
+        clutter_to_prefab_parts,
+        find_clutter_transforms_in_prefab,
+    )
+    from pinacotheca.layered_render import render_layered_ground
+    from pinacotheca.prefab import (
+        drop_splat_meshes,
+        find_root_gameobject,
+        walk_prefab,
+    )
+    from pinacotheca.pvt_splats import find_pvt_splats_in_prefab
+
+    if game_data is None:
+        game_data = find_game_data()
+    if game_data is None or not game_data.exists():
+        raise FileNotFoundError("Could not find Old World game data!")
+    if output_dir is None:
+        output_dir = Path.cwd() / "extracted"
+
+    vegetation_dir = output_dir / "sprites" / "vegetation"
+    vegetation_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve XML chain root (same walk-up as the other extractors).
+    xml_dir: Path | None = None
+    for ancestor in [game_data, *game_data.parents]:
+        candidate = ancestor / "Reference" / "XML" / "Infos"
+        if candidate.is_dir():
+            xml_dir = candidate
+            break
+    if xml_dir is None:
+        raise FileNotFoundError(f"Could not locate Reference/XML/Infos starting from {game_data}")
+
+    assets = load_vegetation_assets(xml_dir)
+    canonical_pngs = {f"VEGETATION_3D_{a.output_name}.png" for a in assets}
+
+    # Stale-cleanup: remove PNGs and sidecars that no longer match the
+    # canonical set (e.g. a patch removed a variation, or a rename
+    # changed the output_name parser).
+    if vegetation_dir.exists():
+        for f in vegetation_dir.iterdir():
+            if not f.is_file():
+                continue
+            if not f.name.startswith("VEGETATION_3D_"):
+                continue
+            if f.suffix == ".json":
+                if (f.stem + ".png") not in canonical_pngs:
+                    f.unlink()
+                    if verbose:
+                        print(f"  Removed stale sidecar: {f.name}")
+                continue
+            if f.suffix == ".png" and f.name not in canonical_pngs:
+                f.unlink()
+                if verbose:
+                    print(f"  Removed stale render: {f.name}")
+
+    if verbose:
+        print("\n" + "=" * 60)
+        print("3D Vegetation Extraction")
+        print("=" * 60)
+        print(f"Discovered {len(assets)} vegetation variants via XML chain")
+
+    rendered = 0
+    skipped_exists = 0
+    skipped_no_prefab = 0
+    skipped_no_geometry = 0
+    errors = 0
+
+    original_cwd = os.getcwd()
+    os.chdir(str(game_data))
+
+    try:
+        if verbose:
+            print("Loading Unity assets...")
+        env = UnityPy.Environment()
+        env.load_file(str(game_data / "globalgamemanagers.assets"))
+        env.load_file(str(game_data / "resources.assets"))
+
+        for asset in assets:
+            out_path = vegetation_dir / f"VEGETATION_3D_{asset.output_name}.png"
+            if out_path.exists():
+                skipped_exists += 1
+                continue
+
+            if asset.prefab_name in VEGETATION_DECODE_BLACKLIST:
+                if verbose:
+                    print(
+                        f"  [SKIP] {asset.output_name} - prefab '{asset.prefab_name}' "
+                        "blacklisted (texture decode segfault)"
+                    )
+                skipped_no_geometry += 1
+                continue
+
+            root_go = find_root_gameobject(env, asset.prefab_name)
+            if root_go is None:
+                if verbose:
+                    print(
+                        f"  [SKIP] {asset.output_name} - prefab "
+                        f"'{asset.prefab_name}' not found in assets"
+                    )
+                skipped_no_prefab += 1
+                continue
+
+            # Vegetation has no MeshFilter buildings — only a `Plane` child
+            # carrying the PVT splat ground (filtered out below) and the
+            # clutter MonoBehaviours that produce the actual vegetation. We
+            # still walk the prefab so any future leaf geometry (e.g. an
+            # unexpected statue) shows up rather than being silently
+            # dropped.
+            try:
+                walk_parts = walk_prefab(root_go, drop_animated_smr_rotation=False)
+            except Exception as e:
+                if verbose:
+                    print(f"  [WARN] {asset.output_name} - walk_prefab failed: {e}")
+                walk_parts = []
+            mesh_parts = drop_splat_meshes(walk_parts)
+
+            # Clutter: ClutterTransforms (jungle, explicit per-instance)
+            # and ClutterSpawner (trees / scrub / cuts, procedural Halton).
+            clutter_parts: list[Any] = []
+            try:
+                cts = find_clutter_transforms_in_prefab(root_go)
+            except Exception as e:
+                if verbose:
+                    print(f"  [WARN] {asset.output_name} - CT walk failed: {e}")
+                cts = []
+            for parsed_ct, parent_world in cts:
+                try:
+                    clutter_parts.extend(clutter_to_prefab_parts(env, parsed_ct, parent_world))
+                except Exception as e:
+                    if verbose:
+                        print(f"  [WARN] {asset.output_name} - CT expand failed: {e}")
+                    continue
+
+            try:
+                css = find_clutter_spawners_in_prefab(root_go)
+            except Exception as e:
+                if verbose:
+                    print(f"  [WARN] {asset.output_name} - CS walk failed: {e}")
+                css = []
+            for parsed_cs, parent_world in css:
+                try:
+                    clutter_parts.extend(
+                        clutter_spawner_to_prefab_parts(
+                            env,
+                            parsed_cs,
+                            parent_world,
+                            apply_texture_mask=False,
+                        )
+                    )
+                except Exception as e:
+                    if verbose:
+                        print(f"  [WARN] {asset.output_name} - CS expand failed: {e}")
+                    continue
+
+            combined = mesh_parts + clutter_parts
+            if not combined:
+                if verbose:
+                    print(f"  [SKIP] {asset.output_name} - no clutter or mesh parts in prefab")
+                skipped_no_geometry += 1
+                continue
+
+            try:
+                pvt_planes = find_pvt_splats_in_prefab(root_go)
+            except Exception as e:
+                if verbose:
+                    print(f"  [WARN] {asset.output_name} - PVT walk failed: {e}")
+                pvt_planes = []
+
+            # Resolve biome ground for the asset's terrain (FLAT for now).
+            # Fall back to TEMPERATE on any chain miss so we don't lose
+            # an entire variant to a missing biome entry.
+            try:
+                biome_base = load_biome_base(env, xml_dir, terrain_z_type=asset.terrain_z_type)
+            except Exception as e:
+                if verbose:
+                    print(
+                        f"  [WARN] {asset.output_name} - biome {asset.terrain_z_type!r} "
+                        f"failed ({e}); falling back to TERRAIN_TEMPERATE"
+                    )
+                try:
+                    biome_base = load_biome_base(env, xml_dir, terrain_z_type="TERRAIN_TEMPERATE")
+                except Exception as e2:
+                    if verbose:
+                        print(f"  [ERROR] {asset.output_name} - biome fallback failed: {e2}")
+                    errors += 1
+                    continue
+
+            try:
+                img, meta = render_layered_ground(
+                    combined,
+                    pvt_planes,
+                    biome_base,
+                    env,
+                    cull_back=False,
+                )
+                img.save(out_path, optimize=False)
+                write_sidecar(out_path, meta)
+                rendered += 1
+                if verbose:
+                    print(
+                        f"  [OK] {asset.output_name} (layered: biome + "
+                        f"{len(pvt_planes)} PVT plane(s) + {len(combined)} parts)"
+                    )
+                del img
+                gc.collect()
+            except Exception as e:
+                if verbose:
+                    print(f"  [ERROR] {asset.output_name} - layered render failed: {e}")
+                errors += 1
+
+        skipped = skipped_exists + skipped_no_prefab + skipped_no_geometry
+
+        if verbose:
+            print("\n" + "=" * 60)
+            print("3D VEGETATION EXTRACTION COMPLETE")
+            print("=" * 60)
+            print(f"Rendered: {rendered}")
+            print(
+                f"Skipped: {skipped} "
+                f"(exists={skipped_exists}, no-prefab={skipped_no_prefab}, "
+                f"no-geometry={skipped_no_geometry})"
+            )
+            print(f"Errors: {errors}")
+            print(f"Output: {vegetation_dir}")
+
+        return {"rendered": rendered, "skipped": skipped, "errors": errors}
+
+    finally:
+        os.chdir(original_cwd)

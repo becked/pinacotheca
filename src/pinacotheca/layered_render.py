@@ -96,6 +96,7 @@ def render_layered_ground(
     padding: int = 32,
     pre_rotation_y_deg: float = 180.0,
     extra_building_parts: list[PrefabPart] | None = None,
+    cull_back: bool = True,
 ) -> tuple[Image.Image, RenderMetadata]:
     """Render the three-layer composite for a capital or urban prefab,
     optionally with an extra building layer for urban-improvement
@@ -123,6 +124,10 @@ def render_layered_ground(
             together would force `find_diffuse_for_prefab` to pick a
             single texture across both, mis-applying it to one group's
             UVs and producing garbled output.
+        cull_back: forwarded to the buildings layer's `render_mesh_to_image`
+            call. Pass False for vegetation (double-sided alpha-cutout
+            billboard quads); ground and PVT layers always cull (solid
+            single-sided hex planes).
 
     Returns:
         Tuple of ``(image, metadata)``. ``image`` is the autocropped
@@ -299,6 +304,7 @@ def render_layered_ground(
             bbox_override=shared_bbox,
             packed_pbr_image=baked.packed_pbr,
             normal_map_image=baked.normal_map,
+            cull_back=cull_back,
         )
         _stack(building_layer)
 

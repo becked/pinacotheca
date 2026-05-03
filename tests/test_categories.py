@@ -126,6 +126,13 @@ class TestCategorize:
         assert categorize("TERRAIN_3D_WATER_OCEAN") == "terrains"
         assert categorize("TERRAIN_3D_TUNDRA_MOUNTAIN") == "terrains"
 
+    def test_vegetation(self) -> None:
+        assert categorize("VEGETATION_3D_TREES") == "vegetation"
+        assert categorize("VEGETATION_3D_TREES_01") == "vegetation"
+        assert categorize("VEGETATION_3D_JUNGLE_HILL") == "vegetation"
+        assert categorize("VEGETATION_3D_TREES_ARID_CHARRED_MINOR_02") == "vegetation"
+        assert categorize("VEGETATION_3D_SCRUB_HURRICANE") == "vegetation"
+
     def test_families(self) -> None:
         assert categorize("FAMILY_JULIUS") == "families"
 

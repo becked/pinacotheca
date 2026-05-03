@@ -362,6 +362,7 @@ def render_mesh_to_image(
     packed_pbr_image: "Image.Image | None" = None,
     occlusion_strength: float = 0.6,
     normal_map_image: "Image.Image | None" = None,
+    cull_back: bool = True,
 ) -> tuple["Image.Image", "RenderMetadata"]:
     """
     Render a textured 3D mesh to a 2D PNG image.
@@ -412,6 +413,11 @@ def render_mesh_to_image(
             perturbed for tangent-space normal mapping. When None, or
             when tangents are missing, lighting falls back to flat
             geometric normals.
+        cull_back: If True (default), enable GL backface culling. Pass
+            False for double-sided alpha-cutout meshes (vegetation
+            billboard quads) — the runtime renders them double-sided so
+            randomly-Y-rotated quads stay visible from any angle; with
+            culling on, ~half of them disappear into back-facing slivers.
 
     Returns:
         Tuple of ``(image, metadata)``. ``image`` is the rendered PIL
@@ -605,7 +611,8 @@ def render_mesh_to_image(
         # Render
         ctx.clear(0.0, 0.0, 0.0, 0.0)  # Transparent background
         ctx.enable(moderngl.DEPTH_TEST)
-        ctx.enable(moderngl.CULL_FACE)
+        if cull_back:
+            ctx.enable(moderngl.CULL_FACE)
         vao.render()
 
         # Read pixels and create image

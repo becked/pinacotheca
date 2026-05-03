@@ -2,6 +2,53 @@
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-05-02
+
+### Added
+- 3D vegetation tile renders covering trees, scrub, jungle, and their
+  cut/charred/charred_minor/hurricane variants:
+  `extracted/sprites/vegetation/VEGETATION_3D_<NAME>.png`. 43 outputs
+  total, spanning the full cross product of vegetation type ×
+  (terrain | height | state). Layered composition (biome ground +
+  per-prefab PVT splat + clutter on top), tagged
+  `composition: "layered"`. Discovery is variation-driven — every
+  `ASSET_VARIATION_VEGETATION_*` entry is scanned and the suffix
+  parses into `(terrain_z_type, height_z_type)` for biome ground
+  lookup; `aiRandomAssets` candidates expand into separate `_NN`
+  outputs (jungle, trees) deduped by prefab name within each
+  variation. New asset_index function `load_vegetation_assets`. New
+  extractor entry point `extract_vegetation_meshes`, wired into the
+  standard `pinacotheca` run between `extract_terrain_tiles` and the
+  end of the pipeline.
+- `cull_back: bool = True` kwarg on `render_mesh_to_image` and
+  `render_layered_ground` (buildings layer only). Vegetation passes
+  `cull_back=False` so 4-vert quad billboards with random Y rotation
+  don't lose ~half their instances to back-facing slivers — Old World
+  authors trees as static quads with stochastic rotations and relies
+  on double-sided alpha-cutout shaders at runtime; we reproduce the
+  same behavior offline.
+- `apply_texture_mask: bool = True` kwarg on
+  `clutter_spawner_to_prefab_parts`. Default keeps the existing
+  resource-prefab behavior (Iron, Gem, etc. cluster per the authored
+  per-tile mask). Vegetation passes `apply_texture_mask=False` to
+  spread instances uniformly via raw Halton — a forest icon should
+  fill the hex, not cluster in one corner. The `rng.next_float()`
+  color-lerp call is still drawn to keep the random sequence aligned
+  with the runtime.
+- New "Vegetation" category (`vegetation/`) with regex `^VEGETATION_`.
+  Display info added in both `categories.py` and the TS-side
+  `web/scripts/generate-manifest.ts` for SvelteKit gallery parity.
+
+### Known limitations
+- HILL height variants render on a flat hex for v1; the 3D peak
+  feature stacking (already implemented for `extract_terrain_tiles`)
+  is not yet plumbed into the vegetation extractor.
+- Per-instance color jitter (`minColor`/`maxColor` in
+  `ClutterSpawner.Model`) is consumed for RNG alignment but not
+  applied — vegetation's autumn-leaf variation is omitted. Plumbing
+  per-instance vertex color through `bake_to_obj` and the shader is
+  deferred.
+
 ## [2.3.0] - 2026-05-01
 
 ### Added

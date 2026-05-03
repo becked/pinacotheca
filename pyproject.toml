@@ -1,6 +1,6 @@
 [project]
 name = "pinacotheca"
-version = "2.3.0"
+version = "2.4.0"
 description = "Extract and catalog sprite assets from Old World (4X strategy game by Mohawk Games)"
 readme = "README.md"
 license = { text = "MIT" }

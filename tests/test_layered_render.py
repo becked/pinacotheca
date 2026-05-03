@@ -133,6 +133,7 @@ def _install_stubs(monkeypatch, layer_colors: list[tuple[int, int, int, int]]):
         packed_pbr_image: Image.Image | None = None,  # noqa: ARG001
         occlusion_strength: float = 0.6,  # noqa: ARG001
         normal_map_image: Image.Image | None = None,  # noqa: ARG001
+        cull_back: bool = True,  # noqa: ARG001
     ) -> tuple[Image.Image, RenderMetadata]:
         color = next(color_iter)
         calls.append(

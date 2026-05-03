@@ -12,11 +12,13 @@ from pathlib import Path
 from pinacotheca.asset_index import (
     ImprovementAsset,
     UrbanRenderableImprovement,
+    VegetationAsset,
     load_capital_assets,
     load_improvement_assets,
     load_resource_assets,
     load_urban_assets,
     load_urban_renderable_improvements,
+    load_vegetation_assets,
 )
 
 
@@ -1345,3 +1347,325 @@ def test_urban_renderable_dedupes_on_z_icon_name(tmp_path: Path) -> None:
     [imp] = load_urban_renderable_improvements(tmp_path)
     assert imp.z_type == "IMPROVEMENT_LIBRARY_1"
     assert imp.prefab_name == "Library"
+
+
+# ============================================================
+# Vegetation chain
+# ============================================================
+#
+# `load_vegetation_assets` scans every `ASSET_VARIATION_VEGETATION_*`
+# entry — independent of `vegetation.xml` — and parses
+# (terrain, height) from the variation name suffix. Tests cover the
+# parser, the multi-candidate `_NN` expansion, prefab dedup within a
+# single variation, and the full base / hill / arid / charred /
+# hurricane suffix matrix.
+
+
+def test_vegetation_single_asset_resolves(tmp_path: Path) -> None:
+    """One SingleAsset variation produces one VegetationAsset with default
+    TEMPERATE / FLAT and no `_NN` suffix on output_name."""
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_VEGETATION_TREES_CUT</zType>
+                <SingleAsset>ASSET_VEGETATION_TREES_CUT</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VEGETATION_TREES_CUT</zType>
+                <zAsset>Prefabs/Features/Trees/ForestCut</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    [veg] = load_vegetation_assets(tmp_path)
+    assert veg == VegetationAsset(
+        output_name="TREES_CUT",
+        prefab_name="ForestCut",
+        variation_z_type="ASSET_VARIATION_VEGETATION_TREES_CUT",
+        asset_z_type="ASSET_VEGETATION_TREES_CUT",
+        terrain_z_type="TERRAIN_TEMPERATE",
+        height_z_type="HEIGHT_FLAT",
+    )
+
+
+def test_vegetation_random_assets_expand_with_padded_suffix(tmp_path: Path) -> None:
+    """`aiRandomAssets` with N distinct prefabs emits N VegetationAssets
+    with zero-padded `_NN` suffixes matching candidate order."""
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_VEGETATION_JUNGLE</zType>
+                <aiRandomAssets>
+                    <Pair><zIndex>ASSET_VEGETATION_JUNGLE_1</zIndex><iValue>1</iValue></Pair>
+                    <Pair><zIndex>ASSET_VEGETATION_JUNGLE_2</zIndex><iValue>1</iValue></Pair>
+                    <Pair><zIndex>ASSET_VEGETATION_JUNGLE_3</zIndex><iValue>1</iValue></Pair>
+                </aiRandomAssets>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VEGETATION_JUNGLE_1</zType>
+                <zAsset>Prefabs/Resource/Jungle_01</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VEGETATION_JUNGLE_2</zType>
+                <zAsset>Prefabs/Resource/Jungle-02</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VEGETATION_JUNGLE_3</zType>
+                <zAsset>Prefabs/Resource/Jungle_03</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    result = load_vegetation_assets(tmp_path)
+    output_names = sorted(v.output_name for v in result)
+    assert output_names == ["JUNGLE_01", "JUNGLE_02", "JUNGLE_03"]
+    prefabs = sorted(v.prefab_name for v in result)
+    assert prefabs == ["Jungle-02", "Jungle_01", "Jungle_03"]
+
+
+def test_vegetation_random_assets_dedupe_by_prefab(tmp_path: Path) -> None:
+    """When several `aiRandomAssets` candidates resolve to the same prefab
+    we emit one VegetationAsset per unique prefab — same prefab rendered
+    three times would just produce three identical PNGs."""
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_VEGETATION_TREES_CHARRED</zType>
+                <aiRandomAssets>
+                    <Pair><zIndex>ASSET_VEGETATION_TREES_CHARRED</zIndex><iValue>1</iValue></Pair>
+                    <Pair><zIndex>ASSET_VEGETATION_TREES_02_CHARRED</zIndex><iValue>1</iValue></Pair>
+                    <Pair><zIndex>ASSET_VEGETATION_TREES_03_CHARRED</zIndex><iValue>1</iValue></Pair>
+                </aiRandomAssets>
+            </Entry>
+            """
+        ),
+    )
+    # First two assets resolve to the same _02 prefab (mirrors the
+    # actual base-game data) — only the third is distinct.
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VEGETATION_TREES_CHARRED</zType>
+                <zAsset>Prefabs/Vegetation/Temperate_Tree_02_Cluster_Impostors_Charred</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VEGETATION_TREES_02_CHARRED</zType>
+                <zAsset>Prefabs/Vegetation/Temperate_Tree_02_Cluster_Impostors_Charred</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VEGETATION_TREES_03_CHARRED</zType>
+                <zAsset>Prefabs/Vegetation/Temperate_Tree_03_Cluster_Impostors_Charred</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    result = load_vegetation_assets(tmp_path)
+    output_names = sorted(v.output_name for v in result)
+    assert output_names == ["TREES_CHARRED_01", "TREES_CHARRED_02"]
+
+
+def test_vegetation_terrain_and_height_parsed_from_suffix(tmp_path: Path) -> None:
+    """ARID and HILL tokens in the variation name set the right
+    `terrain_z_type` / `height_z_type` for biome ground lookup."""
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_VEGETATION_TREES_HILL</zType>
+                <SingleAsset>ASSET_VEGETATION_TREES_HILL</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_VEGETATION_TREES_ARID</zType>
+                <SingleAsset>ASSET_VEGETATION_TREES_ARID</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_VEGETATION_TREES_HILL_HURRICANE</zType>
+                <SingleAsset>ASSET_VEGETATION_TREES_HILL_HURRICANE</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VARIATION_VEGETATION_TREES_ARID_CHARRED_MINOR</zType>
+                <SingleAsset>ASSET_VEGETATION_TREES_ARID_CHARRED_MINOR</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VEGETATION_TREES_HILL</zType>
+                <zAsset>Prefabs/Features/Trees/Temperate_Tree_01_Cluster_Hill_Impostors</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VEGETATION_TREES_ARID</zType>
+                <zAsset>Prefabs/Features/Trees/Arid_Tree_01_Cluster_Impostors</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VEGETATION_TREES_HILL_HURRICANE</zType>
+                <zAsset>Prefabs/Hurricane/Temperate_Tree_01_Cluster_Hill_Impostors Hurricane</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_VEGETATION_TREES_ARID_CHARRED_MINOR</zType>
+                <zAsset>Prefabs/Vegetation/Arid_Tree_01_Charred_Minor</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    result = load_vegetation_assets(tmp_path)
+    by_name = {v.output_name: v for v in result}
+    assert by_name["TREES_HILL"].terrain_z_type == "TERRAIN_TEMPERATE"
+    assert by_name["TREES_HILL"].height_z_type == "HEIGHT_HILL"
+    assert by_name["TREES_ARID"].terrain_z_type == "TERRAIN_ARID"
+    assert by_name["TREES_ARID"].height_z_type == "HEIGHT_FLAT"
+    assert by_name["TREES_HILL_HURRICANE"].terrain_z_type == "TERRAIN_TEMPERATE"
+    assert by_name["TREES_HILL_HURRICANE"].height_z_type == "HEIGHT_HILL"
+    assert by_name["TREES_ARID_CHARRED_MINOR"].terrain_z_type == "TERRAIN_ARID"
+    assert by_name["TREES_ARID_CHARRED_MINOR"].height_z_type == "HEIGHT_FLAT"
+
+
+def test_vegetation_hurricane_prefab_with_space_in_name(tmp_path: Path) -> None:
+    """Hurricane prefab paths in `asset.xml` carry a literal space
+    (`Temperate_Tree_01_Cluster_Impostors Hurricane`); the prefab-name
+    extractor (`rsplit('/', 1)`) keeps the space — nothing special, but
+    worth pinning so a future cleanup doesn't regress."""
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_VEGETATION_TREES_HURRICANE</zType>
+                <SingleAsset>ASSET_VEGETATION_TREES_HURRICANE</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VEGETATION_TREES_HURRICANE</zType>
+                <zAsset>Prefabs/Hurricane/Temperate_Tree_01_Cluster_Impostors Hurricane</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    [veg] = load_vegetation_assets(tmp_path)
+    assert veg.prefab_name == "Temperate_Tree_01_Cluster_Impostors Hurricane"
+
+
+def test_vegetation_dlc_files_merge(tmp_path: Path) -> None:
+    """DLC additions in `assetVariation-eoti.xml` and `asset-eoti.xml`
+    merge with the base-game files (jungle was added by EOTI)."""
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_VEGETATION_TREES_CUT</zType>
+                <SingleAsset>ASSET_VEGETATION_TREES_CUT</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "assetVariation-eoti.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_VEGETATION_JUNGLE_HILL</zType>
+                <SingleAsset>ASSET_VEGETATION_JUNGLE_HILL</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VEGETATION_TREES_CUT</zType>
+                <zAsset>Prefabs/Features/Trees/ForestCut</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset-eoti.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VEGETATION_JUNGLE_HILL</zType>
+                <zAsset>Prefabs/Resource/Jungle_01</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    result = load_vegetation_assets(tmp_path)
+    output_names = sorted(v.output_name for v in result)
+    assert output_names == ["JUNGLE_HILL", "TREES_CUT"]
+
+
+def test_vegetation_missing_xml_dir_returns_empty(tmp_path: Path) -> None:
+    """No `xml_dir` → empty list, no crash."""
+    assert load_vegetation_assets(tmp_path / "nonexistent") == []
+
+
+def test_vegetation_skips_candidates_with_no_asset(tmp_path: Path) -> None:
+    """An aiRandomAssets candidate whose asset chain is broken is
+    silently skipped; the remaining candidates still resolve."""
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VARIATION_VEGETATION_TREES</zType>
+                <aiRandomAssets>
+                    <Pair><zIndex>ASSET_VEGETATION_TREES</zIndex><iValue>1</iValue></Pair>
+                    <Pair><zIndex>ASSET_VEGETATION_TREES_DOES_NOT_EXIST</zIndex><iValue>1</iValue></Pair>
+                </aiRandomAssets>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_VEGETATION_TREES</zType>
+                <zAsset>Prefabs/Features/Trees/Temperate_Tree_01_Cluster_Impostors</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    result = load_vegetation_assets(tmp_path)
+    # Only one candidate resolved — single-prefab variation, no _NN
+    # suffix on output_name.
+    [veg] = result
+    assert veg.output_name == "TREES"
+    assert veg.prefab_name == "Temperate_Tree_01_Cluster_Impostors"
