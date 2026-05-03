@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "composition": "layered",
+  "world": {
+    "maxExtent": 10.15407273,
+    "bboxMin": [
+      -5.10114083,
+      -0.247093015,
+      -5.06053473
+    ],
+    "bboxMax": [
+      5.0529319,
+      0.58616585,
+      5.0529319
+    ],
+    "groundHex": {
+      "bboxMin": [
+        -5.0529319,
+        -5.51091024e-16,
+        -5.0529319
+      ],
+      "bboxMax": [
+        5.0529319,
+        5.51091024e-16,
+        5.0529319
+      ],
+      "pixelBboxMin": [
+        265,
+        197
+      ],
+      "pixelBboxMax": [
+        1364,
+        993
+      ]
+    }
+  },
+  "framing": {
+    "projection": "orthographic",
+    "tiltDeg": 45.0,
+    "distance": 16.246516367999998,
+    "frustumHalfSize": 6.7016880018,
+    "fovDeg": null
+  },
+  "render": {
+    "preCropWidthPx": 2048,
+    "preCropHeightPx": 2048,
+    "outputWidthPx": 1592,
+    "outputHeightPx": 1189,
+    "worldUnitsPerOutputPixel": 0.0065446171892578125
+  }
+}
