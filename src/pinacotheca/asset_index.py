@@ -77,6 +77,13 @@ ASSET_FILES: tuple[str, ...] = (
     "asset-wd.xml",
 )
 TERRAIN_FILES: tuple[str, ...] = ("terrain.xml",)
+IMPROVEMENTCLASS_FILES: tuple[str, ...] = (
+    "improvementClass.xml",
+    "improvementClass-btt.xml",
+    "improvementClass-eoti.xml",
+    "improvementClass-sap.xml",
+    "improvementClass-wd.xml",
+)
 
 
 @dataclass(frozen=True)
@@ -860,6 +867,235 @@ def load_improvement_assets(xml_dir: Path) -> list[ImprovementAsset]:
             skipped_no_variation,
             skipped_no_asset,
             skipped_duplicate_icon,
+        )
+
+    return out
+
+
+# ============================================================
+# Rural-improvement composites
+# ============================================================
+#
+# A "rural composite" is a per-(improvement, resource) render: an
+# improvement and its compatible tile resource composed in 3D on a
+# transparent background. Source of truth for "which resources can pair
+# with which improvement" is `improvementClass.xml`'s `abResourceValid`.
+#
+# The game runtime splits rendering two ways
+# (`ImprovementRenderer.cs:487`, `ResourceRenderer.cs:88-90`):
+#
+#   - Group A: improvement.xml has `aeResourceAssetVariation[resource]`.
+#     The runtime swaps to a bespoke merged prefab (Mine_gold, Farm_Barley)
+#     and ResourceRenderer skips spawning a separate resource prefab.
+#   - Group B: no `aeResourceAssetVariation` entry. Runtime spawns the
+#     improvement prefab AND the resource prefab independently at the
+#     same tile center (Pasture+Horse, Camp+Game).
+#
+# `load_rural_composite_pairs` produces one `RuralCompositePair` per
+# (improvement_z_icon_name, resource_z_icon_name) — Group A vs Group B
+# is encoded by whether `resource_prefab_name` is set.
+
+
+@dataclass(frozen=True)
+class RuralCompositePair:
+    """One (improvement, resource) rural composite to render.
+
+    Group A (`resource_prefab_name is None`): `improvement_prefab_name`
+    is the merged prefab encoding both improvement + resource visuals
+    (Mine_gold, Farm_Barley, Grove_Wine). Walk and bake once.
+
+    Group B (`resource_prefab_name` set): walk the improvement prefab
+    and the resource prefab independently and render as two
+    material-domain layers — they share the tile origin in-game.
+    """
+
+    improvement_z_icon_name: str  # IMPROVEMENT_PASTURE
+    resource_z_icon_name: str  # RESOURCE_HORSE (post-zIconName-alias)
+    output_stem: str  # IMPROVEMENT_3D_PASTURE_HORSE
+    improvement_prefab_name: str  # "Pasture" (Group B) or "Mine_gold" (Group A)
+    resource_prefab_name: str | None  # "Horse" (Group B); None (Group A)
+
+
+def _load_improvement_class_resources(xml_dir: Path) -> dict[str, frozenset[str]]:
+    """Map IMPROVEMENTCLASS_X → frozenset of resource zTypes whose
+    `abResourceValid` Pair has `bValue=1`.
+
+    Walks all `IMPROVEMENTCLASS_FILES` (base + DLC). A class with no
+    `<abResourceValid>` element returns an empty frozenset.
+    """
+    out: dict[str, frozenset[str]] = {}
+    for entry in _load_entries(xml_dir, IMPROVEMENTCLASS_FILES):
+        z_type = _entry_text(entry, "zType")
+        if not z_type:
+            continue
+        node = entry.find("abResourceValid")
+        if node is None:
+            out[z_type] = frozenset()
+            continue
+        valid: set[str] = set()
+        for pair in node.findall("Pair"):
+            res = _entry_text(pair, "zIndex")
+            value = _entry_text(pair, "bValue")
+            if res and value == "1":
+                valid.add(res)
+        out[z_type] = frozenset(valid)
+    return out
+
+
+def _load_resource_z_icon_names(xml_dir: Path) -> dict[str, str]:
+    """Map RESOURCE_<X> zType → its `zIconName` (defaults to zType when
+    `<zIconName>` is missing).
+
+    Captures the canonical aliases: RESOURCE_ORE → RESOURCE_IRON,
+    RESOURCE_MARBLE → RESOURCE_STONE, RESOURCE_IVORY/TEA/etc. →
+    RESOURCE_GENERIC_LUXURY. Output filenames use the icon name.
+    """
+    out: dict[str, str] = {}
+    for entry in _load_entries(xml_dir, RESOURCE_FILES):
+        z_type = _entry_text(entry, "zType")
+        if not z_type:
+            continue
+        out[z_type] = _entry_text(entry, "zIconName") or z_type
+    return out
+
+
+def _build_resource_asset_variation_map(entries: list[ET.Element]) -> dict[str, str]:
+    """Map RESOURCE_<X> zType → its `<AssetVariation>` zType."""
+    out: dict[str, str] = {}
+    for entry in entries:
+        z_type = _entry_text(entry, "zType")
+        if not z_type:
+            continue
+        av = _entry_text(entry, "AssetVariation")
+        if av:
+            out[z_type] = av
+    return out
+
+
+def load_rural_composite_pairs(xml_dir: Path) -> list[RuralCompositePair]:
+    """Discover every (improvement, resource) pair that should produce a
+    rural composite render.
+
+    For each improvement entry whose `Class` has non-empty
+    `abResourceValid`, iterate the valid resources. For each resource,
+    prefer Group A (improvement's `aeResourceAssetVariation[resource]`
+    resolves through the asset chain → merged prefab); fall back to
+    Group B (improvement's base AssetVariation + resource's AssetVariation
+    both resolve). Skip resources whose chains don't resolve on either
+    path (logged at debug).
+
+    Output filename uses the resource's `zIconName` post-alias
+    (RESOURCE_ORE → IRON), so `IMPROVEMENT_3D_MINE_IRON.png` etc. matches
+    the existing `RESOURCE_3D_*.png` convention.
+
+    Dedupes on `(improvement_z_icon_name, resource_z_icon_name)`; first
+    seen wins. This collapses tier-locked aliases (the event-pack
+    `IMPROVEMENT_LAURION_MINE` shares `zIconName=IMPROVEMENT_MINE` with
+    the regular Mine, so its pairs fold into the regular Mine's). Returns
+    an empty list if `xml_dir` doesn't exist.
+    """
+    if not xml_dir.exists():
+        logger.warning("XML directory not found: %s", xml_dir)
+        return []
+
+    improvement_entries_xml = _load_entries(xml_dir, IMPROVEMENT_FILES)
+    variations = _build_variation_index(_load_entries(xml_dir, ASSET_VARIATION_FILES))
+    assets = _build_asset_index(_load_entries(xml_dir, ASSET_FILES))
+    class_resources = _load_improvement_class_resources(xml_dir)
+    resource_icon_names = _load_resource_z_icon_names(xml_dir)
+    resource_av_map = _build_resource_asset_variation_map(_load_entries(xml_dir, RESOURCE_FILES))
+
+    def _resolve_prefab(av_z: str | None) -> str | None:
+        if not av_z:
+            return None
+        variation = variations.get(av_z)
+        if variation is None:
+            return None
+        best_asset_z, _w = max(variation.candidates, key=lambda c: c[1])
+        return assets.get(best_asset_z)
+
+    seen: set[tuple[str, str]] = set()
+    out: list[RuralCompositePair] = []
+    skipped_unresolved_a = 0
+    skipped_unresolved_b = 0
+    skipped_duplicate = 0
+
+    for entry in improvement_entries_xml:
+        z_type = _entry_text(entry, "zType")
+        if not z_type:
+            continue
+        improvement_class = _entry_text(entry, "Class")
+        if not improvement_class:
+            continue
+        valid_resources = class_resources.get(improvement_class)
+        if not valid_resources:
+            continue
+        z_icon_name = _entry_text(entry, "zIconName") or z_type
+        improvement_av = _entry_text(entry, "AssetVariation")
+        ae_node = entry.find("aeResourceAssetVariation")
+        ae_map: dict[str, str] = {}
+        if ae_node is not None:
+            for pair in ae_node.findall("Pair"):
+                r = _entry_text(pair, "zIndex")
+                v = _entry_text(pair, "zValue")
+                if r and v:
+                    ae_map[r] = v
+
+        for resource_z in sorted(valid_resources):
+            resource_icon = resource_icon_names.get(resource_z, resource_z)
+            key = (z_icon_name, resource_icon)
+            if key in seen:
+                skipped_duplicate += 1
+                continue
+            stem = (
+                f"IMPROVEMENT_3D_{z_icon_name.removeprefix('IMPROVEMENT_')}"
+                f"_{resource_icon.removeprefix('RESOURCE_')}"
+            )
+
+            # Group A: prefer the per-resource merged prefab
+            ae_av = ae_map.get(resource_z)
+            ae_prefab = _resolve_prefab(ae_av)
+            if ae_prefab:
+                seen.add(key)
+                out.append(
+                    RuralCompositePair(
+                        improvement_z_icon_name=z_icon_name,
+                        resource_z_icon_name=resource_icon,
+                        output_stem=stem,
+                        improvement_prefab_name=ae_prefab,
+                        resource_prefab_name=None,
+                    )
+                )
+                continue
+            if ae_av is not None:
+                # Mapping exists but didn't resolve — record and try Group B.
+                skipped_unresolved_a += 1
+
+            # Group B: improvement prefab + separate resource prefab
+            improvement_prefab = _resolve_prefab(improvement_av)
+            resource_prefab = _resolve_prefab(resource_av_map.get(resource_z))
+            if improvement_prefab and resource_prefab:
+                seen.add(key)
+                out.append(
+                    RuralCompositePair(
+                        improvement_z_icon_name=z_icon_name,
+                        resource_z_icon_name=resource_icon,
+                        output_stem=stem,
+                        improvement_prefab_name=improvement_prefab,
+                        resource_prefab_name=resource_prefab,
+                    )
+                )
+                continue
+            skipped_unresolved_b += 1
+
+    if skipped_unresolved_a or skipped_unresolved_b or skipped_duplicate:
+        logger.info(
+            "load_rural_composite_pairs: %d resolved, "
+            "%d Group-A unresolved, %d Group-B unresolved, %d duplicate icon",
+            len(out),
+            skipped_unresolved_a,
+            skipped_unresolved_b,
+            skipped_duplicate,
         )
 
     return out

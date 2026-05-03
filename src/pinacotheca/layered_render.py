@@ -39,6 +39,7 @@ from pinacotheca.prefab import (
 from pinacotheca.pvt_splats import PvtPlanePart, compose_pvt_texture
 from pinacotheca.render_metadata import (
     SCHEMA_VERSION,
+    Composition,
     GroundHexBounds,
     RenderInfo,
     RenderMetadata,
@@ -87,9 +88,9 @@ def _plane_to_part(plane: PvtPlanePart) -> PrefabPart:
 
 def render_layered_ground(
     building_parts: list[PrefabPart],
-    pvt_planes: list[PvtPlanePart],
-    biome_base: BiomeBase,
-    env: Any,
+    pvt_planes: list[PvtPlanePart] | None = None,
+    biome_base: BiomeBase | None = None,
+    env: Any = None,
     *,
     width: int = 2048,
     height: int = 2048,
@@ -98,9 +99,21 @@ def render_layered_ground(
     extra_building_parts: list[PrefabPart] | None = None,
     cull_back: bool = True,
 ) -> tuple[Image.Image, RenderMetadata]:
-    """Render the three-layer composite for a capital or urban prefab,
-    optionally with an extra building layer for urban-improvement
-    composites.
+    """Render a multi-layer composite, sharing one camera so the layers
+    align spatially.
+
+    Three render modes depending on which ground inputs are supplied:
+
+    - **Capital / urban / generic-city composite** (biome_base set, PVT
+      non-empty): biome hex + per-nation PVT planes + buildings, tagged
+      ``composition="layered"``.
+    - **Terrain tile** (biome_base set, PVT empty): biome hex + buildings,
+      also ``composition="layered"``.
+    - **Rural composite or transparent multi-prefab render** (biome_base
+      None, PVT empty): just `building_parts` + `extra_building_parts`
+      against transparent bg with shared bbox so two material domains
+      align in 3D — tagged ``composition="prefab"`` since there's no
+      embedded ground (per-ankh continues to draw terrain underneath).
 
     Args:
         building_parts: existing combined parts (after drop_splat_meshes
@@ -109,21 +122,25 @@ def render_layered_ground(
             leaves; we still emit ground in that case (just without the
             top layer).
         pvt_planes: per-nation PVT splat planes from the capital/urban
-            prefab. May be empty (some MeshFilter capitals lack them).
-        biome_base: cached TERRAIN_TEMPERATE base; its `plane` is rendered
-            as the bottom layer with its pre-composed `diffuse` as texture.
+            prefab. None or empty for non-capital paths.
+        biome_base: cached TERRAIN_TEMPERATE base. None for transparent-bg
+            multi-prefab renders (rural composites). When set, its `plane`
+            is rendered as the bottom layer with its pre-composed
+            `diffuse` as texture.
         env: UnityPy environment, used by `compose_pvt_texture` to resolve
-            the per-nation albedo / alpha textures.
+            the per-nation albedo / alpha textures. May be None when
+            `pvt_planes` is empty.
         pre_rotation_y_deg: forwarded to every `bake_to_obj` call. Default
-            180° matches the buildings convention so all three layers face
-            the same way.
+            180° matches the buildings convention so all layers face the
+            same way.
         extra_building_parts: optional second buildings group rendered as
             its own layer on top of `building_parts`. Required when the
             two groups come from different material domains (e.g. an
-            urban tile's clutter + an improvement's mesh) — baking them
-            together would force `find_diffuse_for_prefab` to pick a
-            single texture across both, mis-applying it to one group's
-            UVs and producing garbled output.
+            urban tile's clutter + an improvement's mesh, or — for rural
+            composites — an improvement prefab + a resource prefab) —
+            baking them together would force `find_diffuse_for_prefab`
+            to pick a single texture across both, mis-applying it to one
+            group's UVs and producing garbled output.
         cull_back: forwarded to the buildings layer's `render_mesh_to_image`
             call. Pass False for vegetation (double-sided alpha-cutout
             billboard quads); ground and PVT layers always cull (solid
@@ -131,11 +148,14 @@ def render_layered_ground(
 
     Returns:
         Tuple of ``(image, metadata)``. ``image`` is the autocropped
-        composite. ``metadata`` is tagged ``composition="layered"`` and
-        its world bbox covers the full composited scene
-        (biome ∪ PVT ∪ buildings); per-ankh should not relative-scale
-        layered outputs against per-prefab ones.
+        composite. The metadata's ``composition`` is ``"layered"`` when
+        any ground/PVT layer rendered, else ``"prefab"`` for the
+        transparent-bg multi-prefab case. The world bbox covers the full
+        composited scene; ``ground_hex`` is set only when a biome layer
+        rendered.
     """
+    if pvt_planes is None:
+        pvt_planes = []
     # --- Bake buildings and nation PVT planes first; their union XZ extent
     #     is what we'll scale the biome to cover. The biome prefab
     #     (TilePlains_01) is authored ~18×18 game units which is roughly
@@ -199,39 +219,41 @@ def render_layered_ground(
 
     # --- Bake the biome at its authored transform to measure its native
     #     XZ extent, then rescale around origin to match the target.
-    biome_part_orig = _plane_to_part(biome_base.plane)
-    biome_obj_orig = bake_to_obj([biome_part_orig], pre_rotation_y_deg=pre_rotation_y_deg)
-    biome_bbox_orig = _bbox_of_obj(biome_obj_orig)
+    #     Skipped entirely when biome_base is None (rural composite case).
+    biome_obj: str | None = None
+    if biome_base is not None:
+        biome_part_orig = _plane_to_part(biome_base.plane)
+        biome_obj_orig = bake_to_obj([biome_part_orig], pre_rotation_y_deg=pre_rotation_y_deg)
+        biome_bbox_orig = _bbox_of_obj(biome_obj_orig)
 
-    biome_obj: str
-    if target_bboxes and biome_bbox_orig is not None:
-        target_min, target_max = _union_bbox(target_bboxes)
-        target_extent_x = float(target_max[0] - target_min[0])
-        target_extent_z = float(target_max[2] - target_min[2])
-        biome_extent_x = float(biome_bbox_orig[1][0] - biome_bbox_orig[0][0])
-        biome_extent_z = float(biome_bbox_orig[1][2] - biome_bbox_orig[0][2])
-        # Uniform scale by the larger of the two ratios so the biome covers
-        # the target rectangle on both axes (the Hex_Mask alpha falloff
-        # pads the corners). Floor at 0.2× to guard against degenerate
-        # tiny prefabs producing an invisible biome.
-        scale_xz = max(
-            0.2,
-            min(
-                1.0,
-                max(target_extent_x / biome_extent_x, target_extent_z / biome_extent_z),
-            ),
-        )
-        scale_matrix = np.diag([scale_xz, 1.0, scale_xz, 1.0]).astype(np.float64)
-        biome_part = PrefabPart(
-            mesh_obj=biome_base.plane.mesh_obj,
-            world_matrix=scale_matrix @ biome_base.plane.world_matrix,
-            materials=[],
-        )
-        biome_obj = bake_to_obj([biome_part], pre_rotation_y_deg=pre_rotation_y_deg)
-    else:
-        # No buildings or nation PVT to size against — render biome at its
-        # authored size.
-        biome_obj = biome_obj_orig
+        if target_bboxes and biome_bbox_orig is not None:
+            target_min, target_max = _union_bbox(target_bboxes)
+            target_extent_x = float(target_max[0] - target_min[0])
+            target_extent_z = float(target_max[2] - target_min[2])
+            biome_extent_x = float(biome_bbox_orig[1][0] - biome_bbox_orig[0][0])
+            biome_extent_z = float(biome_bbox_orig[1][2] - biome_bbox_orig[0][2])
+            # Uniform scale by the larger of the two ratios so the biome covers
+            # the target rectangle on both axes (the Hex_Mask alpha falloff
+            # pads the corners). Floor at 0.2× to guard against degenerate
+            # tiny prefabs producing an invisible biome.
+            scale_xz = max(
+                0.2,
+                min(
+                    1.0,
+                    max(target_extent_x / biome_extent_x, target_extent_z / biome_extent_z),
+                ),
+            )
+            scale_matrix = np.diag([scale_xz, 1.0, scale_xz, 1.0]).astype(np.float64)
+            biome_part = PrefabPart(
+                mesh_obj=biome_base.plane.mesh_obj,
+                world_matrix=scale_matrix @ biome_base.plane.world_matrix,
+                materials=[],
+            )
+            biome_obj = bake_to_obj([biome_part], pre_rotation_y_deg=pre_rotation_y_deg)
+        else:
+            # No buildings or nation PVT to size against — render biome at its
+            # authored size.
+            biome_obj = biome_obj_orig
 
     # --- Compute the shared bbox in baked render space across all layers.
     #     Capture the biome bbox separately for the layered sidecar's
@@ -241,7 +263,7 @@ def render_layered_ground(
     #     biome layer renders and the final autocrop establishes the pixel
     #     coordinate frame.
     bboxes: list[tuple[NDArray[np.float64], NDArray[np.float64]]] = []
-    biome_bbox = _bbox_of_obj(biome_obj)
+    biome_bbox = _bbox_of_obj(biome_obj) if biome_obj is not None else None
     if biome_bbox is not None:
         bboxes.append(biome_bbox)
     bboxes.extend(target_bboxes)
@@ -262,24 +284,28 @@ def render_layered_ground(
         else:
             composite = Image.alpha_composite(composite, layer)
 
-    biome_layer, layer_metadata = render_mesh_to_image(
-        biome_obj,
-        biome_base.diffuse,
-        width=width,
-        height=height,
-        autocrop=False,
-        force_upright=True,
-        bbox_override=shared_bbox,
-        flat_lighting=True,
-    )
-    # The biome layer's alpha is the inscribed hex shape (Hex_Mask × the
-    # quad mesh). Capture its pre-crop pixel AABB now so we can translate
-    # it into output-PNG coords after the final autocrop.
-    biome_pre_crop_bbox = biome_layer.getbbox()
-    _stack(biome_layer)
+    layer_metadata: Any = None  # captured from the first rendered layer
+    biome_pre_crop_bbox: tuple[int, int, int, int] | None = None
+
+    if biome_obj is not None and biome_base is not None:
+        biome_layer, layer_metadata = render_mesh_to_image(
+            biome_obj,
+            biome_base.diffuse,
+            width=width,
+            height=height,
+            autocrop=False,
+            force_upright=True,
+            bbox_override=shared_bbox,
+            flat_lighting=True,
+        )
+        # The biome layer's alpha is the inscribed hex shape (Hex_Mask × the
+        # quad mesh). Capture its pre-crop pixel AABB now so we can translate
+        # it into output-PNG coords after the final autocrop.
+        biome_pre_crop_bbox = biome_layer.getbbox()
+        _stack(biome_layer)
 
     for _plane, plane_obj, tex in nation_planes_with_texture:
-        nation_layer, _ = render_mesh_to_image(
+        nation_layer, nation_meta = render_mesh_to_image(
             plane_obj,
             tex,
             width=width,
@@ -289,12 +315,14 @@ def render_layered_ground(
             bbox_override=shared_bbox,
             flat_lighting=True,
         )
+        if layer_metadata is None:
+            layer_metadata = nation_meta
         _stack(nation_layer)
 
     for baked in (primary_buildings, extra_buildings):
         if baked is None:
             continue
-        building_layer, _ = render_mesh_to_image(
+        building_layer, building_meta = render_mesh_to_image(
             baked.obj,
             baked.tex,
             width=width,
@@ -306,6 +334,8 @@ def render_layered_ground(
             normal_map_image=baked.normal_map,
             cull_back=cull_back,
         )
+        if layer_metadata is None:
+            layer_metadata = building_meta
         _stack(building_layer)
 
     assert composite is not None
@@ -352,9 +382,15 @@ def render_layered_ground(
 
     shared_min, shared_max = shared_bbox
     shared_extent = shared_max - shared_min
+    # When no biome and no PVT actually rendered, this is a transparent-bg
+    # multi-prefab composite (rural composite case) — tag as "prefab" so
+    # consumers know there's no embedded ground and the bbox is just the
+    # union of building groups, equivalent to a single-prefab render.
+    has_ground_layer = biome_base is not None or bool(nation_planes_with_texture)
+    composition_tag: Composition = "layered" if has_ground_layer else "prefab"
     layered_metadata = RenderMetadata(
         version=SCHEMA_VERSION,
-        composition="layered",
+        composition=composition_tag,
         world=WorldBounds(
             max_extent=float(shared_extent.max()),
             bbox_min=(float(shared_min[0]), float(shared_min[1]), float(shared_min[2])),

@@ -1749,6 +1749,203 @@ def extract_urban_composite_meshes(
         os.chdir(original_cwd)
 
 
+def extract_rural_composite_meshes(
+    *,
+    game_data: Path | None = None,
+    output_dir: Path | None = None,
+    verbose: bool = True,
+) -> dict[str, int]:
+    """Render per-(improvement, resource) rural composites where the
+    improvement ships a per-resource merged prefab — Mine_gold, Farm_Barley,
+    Grove_Wine, etc. (Group A in `load_rural_composite_pairs`). Output:
+    `extracted/sprites/improvements/<output_stem>.png` plus a JSON sidecar.
+
+    Each pair walks one prefab (mesh + ClutterTransforms expansion + the
+    prefab's own PVT splat planes — the wheat field paint, mine excavation
+    patch, etc., which encode the improvement's tile-local painted ground).
+    No biome hex is embedded; per-ankh keeps drawing its terrain tile
+    underneath. Sidecar is tagged `composition="layered"` when PVT planes
+    composed, else `"prefab"`.
+
+    **Group B pairs (Pasture+animal, Camp+animal) are deferred** —
+    `load_rural_composite_pairs` still returns them, but rendering an
+    improvement prefab + a resource prefab as two layers requires the
+    resource rig to be in its idle pose, which lives in the AnimatorController's
+    compressed Mecanim muscle clip. Sampling that requires Unity-runtime
+    reverse engineering we haven't done. See
+    `docs/rural-improvement-composites.md` "Why Group B is deferred."
+
+    Returns `{"rendered": int, "skipped": int, "errors": int}`.
+    """
+    try:
+        import UnityPy
+    except ImportError as e:
+        if verbose:
+            print(f"WARNING: 3D rendering not available ({e})", file=sys.stderr)
+        return {"rendered": 0, "skipped": 0, "errors": 0}
+
+    from pinacotheca.asset_index import load_rural_composite_pairs
+    from pinacotheca.clutter_transforms import (
+        clutter_to_prefab_parts_with_type,
+        find_clutter_transforms_in_prefab,
+    )
+    from pinacotheca.layered_render import render_layered_ground
+    from pinacotheca.prefab import (
+        drop_splat_meshes,
+        find_root_gameobject,
+        walk_prefab,
+    )
+    from pinacotheca.pvt_splats import find_pvt_splats_in_prefab
+    from pinacotheca.render_metadata import write_sidecar
+
+    if game_data is None:
+        game_data = find_game_data()
+    if game_data is None or not game_data.exists():
+        raise FileNotFoundError("Could not find Old World game data!")
+    if output_dir is None:
+        output_dir = Path.cwd() / "extracted"
+
+    improvements_dir = output_dir / "sprites" / "improvements"
+    improvements_dir.mkdir(parents=True, exist_ok=True)
+
+    # Resolve XML chain root (same walk-up as extract_improvement_meshes).
+    xml_dir: Path | None = None
+    for ancestor in [game_data, *game_data.parents]:
+        candidate = ancestor / "Reference" / "XML" / "Infos"
+        if candidate.is_dir():
+            xml_dir = candidate
+            break
+    if xml_dir is None:
+        raise FileNotFoundError(f"Could not locate Reference/XML/Infos starting from {game_data}")
+
+    all_pairs = load_rural_composite_pairs(xml_dir)
+    pairs = [p for p in all_pairs if p.resource_prefab_name is None]
+    deferred_b = len(all_pairs) - len(pairs)
+
+    if verbose:
+        print("\n" + "=" * 60)
+        print("3D Rural-Improvement Composite Extraction")
+        print("=" * 60)
+        print(f"Rendering {len(pairs)} merged-prefab (Group A) pairs")
+        if deferred_b:
+            print(
+                f"Deferring {deferred_b} improvement+resource (Group B) pairs "
+                f"— rig pose blocked on Mecanim sampling"
+            )
+
+    original_cwd = os.getcwd()
+    os.chdir(str(game_data))
+
+    rendered = 0
+    skipped_exists = 0
+    skipped_no_prefab = 0
+    skipped_no_mesh = 0
+    errors = 0
+
+    try:
+        if verbose:
+            print("Loading Unity assets...")
+        env = UnityPy.Environment()
+        env.load_file(str(game_data / "globalgamemanagers.assets"))
+        env.load_file(str(game_data / "resources.assets"))
+
+        def _walk_improvement(prefab_name: str) -> tuple[list[Any], list[Any]] | None:
+            """Walk a merged-prefab → (mesh+clutter parts, PVT planes).
+
+            PVT splat planes intrinsic to the prefab encode the visible
+            crop field (Farm_Barley), the dirt excavation patch (Mine_gold),
+            etc. — they're part of the improvement's visual identity, not
+            biome ground, so we include them. Distinct from the urban
+            composite path where the biome hex IS embedded; here we still
+            render against a transparent bg (per-ankh keeps layering its
+            own terrain underneath), but the prefab's own PVT painting
+            comes along.
+
+            Returns None if the prefab can't be found.
+            """
+            root = find_root_gameobject(env, prefab_name)
+            if root is None:
+                return None
+            mesh_parts = drop_splat_meshes(
+                [p for p in walk_prefab(root) if not _is_lower_lod_part(p)]
+            )
+            clutter_parts: list[Any] = []
+            for parsed_ct, parent_world in find_clutter_transforms_in_prefab(root):
+                try:
+                    typed = clutter_to_prefab_parts_with_type(env, parsed_ct, parent_world)
+                except NotImplementedError:
+                    continue
+                clutter_parts.extend(p for p, _ in typed)
+            pvt_planes = find_pvt_splats_in_prefab(root)
+            return (mesh_parts + clutter_parts, pvt_planes)
+
+        for pair in pairs:
+            out_path = improvements_dir / f"{pair.output_stem}.png"
+            if out_path.exists():
+                skipped_exists += 1
+                continue
+
+            walk_result = _walk_improvement(pair.improvement_prefab_name)
+            if walk_result is None:
+                if verbose:
+                    print(
+                        f"  [SKIP] {out_path.name}: prefab "
+                        f"{pair.improvement_prefab_name!r} not found"
+                    )
+                skipped_no_prefab += 1
+                continue
+            primary_parts, pvt_planes = walk_result
+
+            if not primary_parts and not pvt_planes:
+                if verbose:
+                    print(f"  [SKIP] {out_path.name}: no usable mesh or PVT content")
+                skipped_no_mesh += 1
+                continue
+
+            try:
+                img, meta = render_layered_ground(
+                    primary_parts,
+                    pvt_planes,
+                    None,
+                    env,
+                )
+                img.save(out_path, optimize=False)
+                write_sidecar(out_path, meta)
+                rendered += 1
+                if verbose:
+                    print(
+                        f"  [OK] {out_path.name} "
+                        f"(primary={len(primary_parts)} parts, pvt={len(pvt_planes)} planes)"
+                    )
+                del img
+                gc.collect()
+            except Exception as e:
+                if verbose:
+                    print(f"  [ERROR] {out_path.name}: {e}")
+                errors += 1
+
+        if verbose:
+            print("\n" + "=" * 60)
+            print("RURAL-COMPOSITE EXTRACTION COMPLETE")
+            print("=" * 60)
+            print(f"Rendered: {rendered}")
+            print(f"Skipped (exists): {skipped_exists}")
+            print(f"Skipped (no prefab): {skipped_no_prefab}")
+            print(f"Skipped (no mesh): {skipped_no_mesh}")
+            print(f"Errors: {errors}")
+            if deferred_b:
+                print(f"Deferred Group B (rig pose blocker): {deferred_b}")
+
+        return {
+            "rendered": rendered,
+            "skipped": skipped_exists + skipped_no_prefab + skipped_no_mesh,
+            "errors": errors,
+        }
+
+    finally:
+        os.chdir(original_cwd)
+
+
 def extract_terrain_tiles(
     *,
     game_data: Path | None = None,

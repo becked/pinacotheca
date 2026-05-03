@@ -11,11 +11,13 @@ from pathlib import Path
 
 from pinacotheca.asset_index import (
     ImprovementAsset,
+    RuralCompositePair,
     UrbanRenderableImprovement,
     VegetationAsset,
     load_capital_assets,
     load_improvement_assets,
     load_resource_assets,
+    load_rural_composite_pairs,
     load_urban_assets,
     load_urban_renderable_improvements,
     load_vegetation_assets,
@@ -1669,3 +1671,420 @@ def test_vegetation_skips_candidates_with_no_asset(tmp_path: Path) -> None:
     [veg] = result
     assert veg.output_name == "TREES"
     assert veg.prefab_name == "Temperate_Tree_01_Cluster_Impostors"
+
+
+# ============================================================
+# load_rural_composite_pairs
+# ============================================================
+
+
+def _write_rural_chain_basics(tmp_path: Path) -> None:
+    """Set up improvementClass + assetVariation + asset + resource chains
+    used across the rural-composite tests below.
+
+    Covers:
+      - IMPROVEMENTCLASS_MINE with abResourceValid={ORE, GOLD}
+      - IMPROVEMENTCLASS_PASTURE with abResourceValid={HORSE}
+      - IMPROVEMENTCLASS_FARM with abResourceValid={WHEAT}  (no Wine)
+      - asset chains for Mine_gold (Group A), bare Mine, Pasture, Horse,
+        Farm, Wheat resource prefab, Wine resource prefab
+      - resource zIconName aliases: ORE→IRON, MARBLE→STONE
+    """
+    _write(
+        tmp_path / "improvementClass.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENTCLASS_MINE</zType>
+                <abResourceValid>
+                    <Pair><zIndex>RESOURCE_ORE</zIndex><bValue>1</bValue></Pair>
+                    <Pair><zIndex>RESOURCE_GOLD</zIndex><bValue>1</bValue></Pair>
+                </abResourceValid>
+            </Entry>
+            <Entry>
+                <zType>IMPROVEMENTCLASS_PASTURE</zType>
+                <abResourceValid>
+                    <Pair><zIndex>RESOURCE_HORSE</zIndex><bValue>1</bValue></Pair>
+                </abResourceValid>
+            </Entry>
+            <Entry>
+                <zType>IMPROVEMENTCLASS_FARM</zType>
+                <abResourceValid>
+                    <Pair><zIndex>RESOURCE_WHEAT</zIndex><bValue>1</bValue></Pair>
+                </abResourceValid>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "resource.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>RESOURCE_HORSE</zType>
+                <zIconName>RESOURCE_HORSE</zIconName>
+                <AssetVariation>VAR_RESOURCE_HORSE</AssetVariation>
+            </Entry>
+            <Entry>
+                <zType>RESOURCE_ORE</zType>
+                <zIconName>RESOURCE_IRON</zIconName>
+                <AssetVariation>VAR_RESOURCE_ORE</AssetVariation>
+            </Entry>
+            <Entry>
+                <zType>RESOURCE_GOLD</zType>
+                <AssetVariation>VAR_RESOURCE_GOLD</AssetVariation>
+            </Entry>
+            <Entry>
+                <zType>RESOURCE_WHEAT</zType>
+                <AssetVariation>VAR_RESOURCE_WHEAT</AssetVariation>
+            </Entry>
+            <Entry>
+                <zType>RESOURCE_WINE</zType>
+                <AssetVariation>VAR_RESOURCE_WINE</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>VAR_IMP_MINE</zType>
+                <SingleAsset>ASSET_IMP_MINE</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>VAR_IMP_MINE_GOLD</zType>
+                <SingleAsset>ASSET_IMP_MINE_GOLD</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>VAR_IMP_PASTURE</zType>
+                <SingleAsset>ASSET_IMP_PASTURE</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>VAR_IMP_FARM</zType>
+                <SingleAsset>ASSET_IMP_FARM</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>VAR_IMP_FARM_WINE</zType>
+                <SingleAsset>ASSET_IMP_FARM_WINE</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>VAR_RESOURCE_HORSE</zType>
+                <SingleAsset>ASSET_RES_HORSE</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>VAR_RESOURCE_ORE</zType>
+                <SingleAsset>ASSET_RES_ORE</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>VAR_RESOURCE_GOLD</zType>
+                <SingleAsset>ASSET_RES_GOLD</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>VAR_RESOURCE_WHEAT</zType>
+                <SingleAsset>ASSET_RES_WHEAT</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>VAR_RESOURCE_WINE</zType>
+                <SingleAsset>ASSET_RES_WINE</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_IMP_MINE</zType>
+                <zAsset>Prefabs/Improvements/Mine</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_IMP_MINE_GOLD</zType>
+                <zAsset>Prefabs/Improvements/Mine_gold</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_IMP_PASTURE</zType>
+                <zAsset>Prefabs/Improvements/Pasture</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_IMP_FARM</zType>
+                <zAsset>Prefabs/Improvements/Farm</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_IMP_FARM_WINE</zType>
+                <zAsset>Prefabs/Improvements/Farm_Wine</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_RES_HORSE</zType>
+                <zAsset>Prefabs/Resource/Horse</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_RES_ORE</zType>
+                <zAsset>Prefabs/Resource/Iron</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_RES_GOLD</zType>
+                <zAsset>Prefabs/Resource/Gold</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_RES_WHEAT</zType>
+                <zAsset>Prefabs/Resource/Wheat</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_RES_WINE</zType>
+                <zAsset>Prefabs/Resource/Wine</zAsset>
+            </Entry>
+            """
+        ),
+    )
+
+
+def test_rural_composite_group_a_resolves(tmp_path: Path) -> None:
+    """Improvement with `aeResourceAssetVariation[resource]` resolves to a
+    merged prefab. resource_prefab_name is None (Group A signal)."""
+    _write_rural_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_MINE</zType>
+                <Class>IMPROVEMENTCLASS_MINE</Class>
+                <AssetVariation>VAR_IMP_MINE</AssetVariation>
+                <aeResourceAssetVariation>
+                    <Pair>
+                        <zIndex>RESOURCE_GOLD</zIndex>
+                        <zValue>VAR_IMP_MINE_GOLD</zValue>
+                    </Pair>
+                </aeResourceAssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    pairs = load_rural_composite_pairs(tmp_path)
+    assert (
+        RuralCompositePair(
+            improvement_z_icon_name="IMPROVEMENT_MINE",
+            resource_z_icon_name="RESOURCE_GOLD",
+            output_stem="IMPROVEMENT_3D_MINE_GOLD",
+            improvement_prefab_name="Mine_gold",
+            resource_prefab_name=None,
+        )
+        in pairs
+    )
+
+
+def test_rural_composite_group_b_resolves(tmp_path: Path) -> None:
+    """Improvement WITHOUT `aeResourceAssetVariation` falls back to Group B:
+    base improvement prefab + resource prefab as two layers."""
+    _write_rural_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_PASTURE</zType>
+                <Class>IMPROVEMENTCLASS_PASTURE</Class>
+                <AssetVariation>VAR_IMP_PASTURE</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    [pair] = load_rural_composite_pairs(tmp_path)
+    assert pair == RuralCompositePair(
+        improvement_z_icon_name="IMPROVEMENT_PASTURE",
+        resource_z_icon_name="RESOURCE_HORSE",
+        output_stem="IMPROVEMENT_3D_PASTURE_HORSE",
+        improvement_prefab_name="Pasture",
+        resource_prefab_name="Horse",
+    )
+
+
+def test_rural_composite_uses_resource_z_icon_name(tmp_path: Path) -> None:
+    """Output stem uses the resource's zIconName (post-alias), not zType.
+    RESOURCE_ORE → RESOURCE_IRON in the filename."""
+    _write_rural_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_MINE</zType>
+                <Class>IMPROVEMENTCLASS_MINE</Class>
+                <AssetVariation>VAR_IMP_MINE</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    pairs = load_rural_composite_pairs(tmp_path)
+    # No aeResourceAssetVariation, so both ORE and GOLD fall back to
+    # Group B. ORE's icon name is IRON.
+    iron_pairs = [p for p in pairs if p.resource_z_icon_name == "RESOURCE_IRON"]
+    assert len(iron_pairs) == 1
+    assert iron_pairs[0].output_stem == "IMPROVEMENT_3D_MINE_IRON"
+
+
+def test_rural_composite_drops_resource_not_in_class(tmp_path: Path) -> None:
+    """A resource with `aeResourceAssetVariation` mapping but not listed in
+    the improvement's class `abResourceValid` is rejected (the
+    Farm+Wine real-game case — Wine is a Grove resource, not Farm)."""
+    _write_rural_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_FARM</zType>
+                <Class>IMPROVEMENTCLASS_FARM</Class>
+                <AssetVariation>VAR_IMP_FARM</AssetVariation>
+                <aeResourceAssetVariation>
+                    <Pair>
+                        <zIndex>RESOURCE_WINE</zIndex>
+                        <zValue>VAR_IMP_FARM_WINE</zValue>
+                    </Pair>
+                </aeResourceAssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    pairs = load_rural_composite_pairs(tmp_path)
+    # Wine is in Farm's aeResourceAssetVariation but NOT in
+    # IMPROVEMENTCLASS_FARM.abResourceValid → no Farm+Wine pair.
+    assert all(p.resource_z_icon_name != "RESOURCE_WINE" for p in pairs)
+    # Wheat IS in both the class and the asset chain → it should be the
+    # only emitted pair (Group B fallback since no ae mapping for Wheat).
+    [wheat] = pairs
+    assert wheat.resource_z_icon_name == "RESOURCE_WHEAT"
+    assert wheat.improvement_prefab_name == "Farm"
+    assert wheat.resource_prefab_name == "Wheat"
+
+
+def test_rural_composite_skips_improvement_with_missing_class(tmp_path: Path) -> None:
+    """An improvement whose `<Class>` references an entry not present in
+    improvementClass.xml is skipped silently — no exception."""
+    _write_rural_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_GHOST</zType>
+                <Class>IMPROVEMENTCLASS_DOES_NOT_EXIST</Class>
+                <AssetVariation>VAR_IMP_PASTURE</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    pairs = load_rural_composite_pairs(tmp_path)
+    assert pairs == []
+
+
+def test_rural_composite_dedupes_aliased_z_icon_name(tmp_path: Path) -> None:
+    """Two improvement entries that share `zIconName` (e.g. event-pack
+    LAURION_MINE aliases to IMPROVEMENT_MINE) collapse to one pair per
+    resource. Document order in IMPROVEMENT_FILES picks the winner."""
+    _write_rural_chain_basics(tmp_path)
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_MINE</zType>
+                <Class>IMPROVEMENTCLASS_MINE</Class>
+                <AssetVariation>VAR_IMP_MINE</AssetVariation>
+                <aeResourceAssetVariation>
+                    <Pair>
+                        <zIndex>RESOURCE_GOLD</zIndex>
+                        <zValue>VAR_IMP_MINE_GOLD</zValue>
+                    </Pair>
+                </aeResourceAssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "improvement-event.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_LAURION_MINE</zType>
+                <zIconName>IMPROVEMENT_MINE</zIconName>
+                <Class>IMPROVEMENTCLASS_MINE</Class>
+                <AssetVariation>VAR_IMP_MINE</AssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    pairs = load_rural_composite_pairs(tmp_path)
+    # Two pairs total (GOLD from Group A, ORE→IRON from Group B), not four —
+    # LAURION_MINE folds into IMPROVEMENT_MINE.
+    assert len(pairs) == 2
+    icon_names = {p.improvement_z_icon_name for p in pairs}
+    assert icon_names == {"IMPROVEMENT_MINE"}
+
+
+def test_rural_composite_falls_back_to_group_b_when_a_chain_broken(tmp_path: Path) -> None:
+    """If `aeResourceAssetVariation[resource]` exists but the variation
+    or asset chain is missing, fall back to Group B rather than dropping
+    the pair entirely."""
+    _write_rural_chain_basics(tmp_path)
+    # Override improvement.xml: Mine maps Gold to a broken variation,
+    # but Gold is still a valid Mine resource — Group B should resolve
+    # via the bare Mine prefab + Gold resource prefab if those exist.
+    _write(
+        tmp_path / "improvement.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>IMPROVEMENT_MINE</zType>
+                <Class>IMPROVEMENTCLASS_MINE</Class>
+                <AssetVariation>VAR_IMP_MINE</AssetVariation>
+                <aeResourceAssetVariation>
+                    <Pair>
+                        <zIndex>RESOURCE_GOLD</zIndex>
+                        <zValue>VAR_IMP_MINE_NONEXISTENT</zValue>
+                    </Pair>
+                </aeResourceAssetVariation>
+            </Entry>
+            """
+        ),
+    )
+    # Add a Gold resource prefab so Group B can resolve.
+    _write(
+        tmp_path / "asset.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>ASSET_IMP_MINE</zType>
+                <zAsset>Prefabs/Improvements/Mine</zAsset>
+            </Entry>
+            <Entry>
+                <zType>ASSET_RES_GOLD</zType>
+                <zAsset>Prefabs/Resource/Gold</zAsset>
+            </Entry>
+            """
+        ),
+    )
+    _write(
+        tmp_path / "assetVariation.xml",
+        _wrap(
+            """
+            <Entry>
+                <zType>VAR_IMP_MINE</zType>
+                <SingleAsset>ASSET_IMP_MINE</SingleAsset>
+            </Entry>
+            <Entry>
+                <zType>VAR_RESOURCE_GOLD</zType>
+                <SingleAsset>ASSET_RES_GOLD</SingleAsset>
+            </Entry>
+            """
+        ),
+    )
+    pairs = load_rural_composite_pairs(tmp_path)
+    gold_pairs = [p for p in pairs if p.resource_z_icon_name == "RESOURCE_GOLD"]
+    [gold] = gold_pairs
+    # Group B fallback: both prefabs set
+    assert gold.improvement_prefab_name == "Mine"
+    assert gold.resource_prefab_name == "Gold"
