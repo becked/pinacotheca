@@ -2,6 +2,86 @@
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-05-19
+
+### Added
+- Mod extraction. `pinacotheca` now scans the user's local Old World
+  mods directory (`~/Library/Application Support/OldWorld/Mods/` on
+  macOS) and extracts visual assets from each installed mod's Unity
+  AssetBundles alongside the base-game extraction. New
+  `src/pinacotheca/mod_scanner.py` handles discovery + classification
+  (Mesh-bearing bundles → 3D, Sprite/Texture2D-only → 2D, gameplay-only
+  → skipped); new `src/pinacotheca/mod_extractor.py` routes 3D
+  bundles through the existing prefab walker + renderer and emits 2D
+  sprites directly. Outputs land under
+  `extracted/sprites/mods/<slug>/<sub>/*.png` with a per-mod
+  `mod.json` sidecar. Cross-platform: UnityPy reads Windows- or
+  macOS-targeted bundles regardless of host (only the mod's C# DLL is
+  platform-dependent, and we don't need it).
+- 3D mod units render in both `_FRONT` and `_BACK` views since mod
+  authors don't share a canonical authored facing direction. A
+  small `_BACK_AUTHORED_PREFABS` table flips the rotation→suffix
+  mapping per-prefab so `_FRONT.png` always shows the soldier's face,
+  not the rotation amount.
+- 2D Sprite → Texture2D fallback in `_extract_2d_bundle` for bundles
+  whose `Sprite` metadata triggers a UnityPy crop-rect bug that
+  returns blank pixels (Greek Dynasties' resource bundle is the
+  canonical case). Texture2Ds with no paired Sprite also extract
+  standalone.
+- `_MOD_ATTRIBUTION` table tracking collaborators that ModInfo
+  doesn't expose as structured data — e.g. Dynamic Unit thanking
+  "And" for icons in its description, Greek Dynasties bundling NSG's
+  3D meshes without inline credit. Each entry resolves to
+  `{default, overrides}` where `overrides` apply by filename regex
+  (first match wins). The TS-side `generate-manifest.ts` mirror
+  stamps `authors: string[]` on each mod sprite.
+- Gallery Mods section. `web/scripts/generate-manifest.ts` emits a
+  top-level `mods: ModEntry[]` array, sprites get `modSlug` +
+  `authors[]` fields. New `ModCard.svelte` component shows a subtle
+  italic "by X & Y" byline; `SpriteCard.svelte` shows the same line
+  in search results; the lightbox shows "from `<Mod Name>` · by X & Y"
+  in the metadata area. URL param `?mod=<slug>` filters the gallery
+  to a single mod.
+- `pinacotheca-mods` standalone entry point for refreshing only the
+  mod outputs (much faster than the full pipeline).
+- `--no-mods` flag on `pinacotheca` to skip mod extraction.
+- Mod sprites included in the search index — typing in the gallery
+  search box matches mod content as well as base-game sprites.
+
+### Changed
+- `APPROVED_AUTHORS_BY_MOD` per-mod publication allowlist
+  (`mod_extractor.py`). A mod sprite ships to the deployed gallery
+  only when its mod has an entry AND every credited author is in
+  that mod's approved set. Files still extract locally regardless —
+  per-ankh and other local consumers retain everything; only the
+  gallery's deployed surface is gated. Initial entries:
+  `byzantine-empire` (Dale Kent), `dynamic-unit` (Harry, And). NSG,
+  Dynamic World, and Greek Dynasties remain on disk locally but
+  don't ship.
+- `compute_excluded_mod_globs()` walks each mod's `mod.json`,
+  resolves per-file authors against the attribution table, and emits
+  literal-path globs for sprites whose mod has no approval entry
+  (or whose authors aren't all approved). These get merged into the
+  existing gallery-filter sidecar via the new `extra_globs`
+  parameter on `gallery_filter.write_filter_sidecar()` — same
+  mechanism that already excludes urban composites from deploy and
+  manifest.
+- `pinacotheca-deploy` reads the sidecar's `excludeGlobs` (merged
+  list) instead of the static `GALLERY_EXCLUDE_GLOBS` constant, so
+  per-mod approval decisions reach the gh-pages deploy without a
+  parallel filter mechanism.
+
+### Docs
+- New `docs/mod-extraction.md` covering discovery, the FRONT/BACK
+  3D render pattern, the Sprite→Texture2D fallback, the
+  attribution table, and the per-mod approval policy with
+  grant/revoke instructions.
+- README's Usage section gained an "Extract Mod Assets" subsection
+  pointing at the new doc.
+- CLAUDE.md's "Gallery deploy filter" section grew a "Mod extraction
+  + artist opt-outs" subsection summarizing the design for future
+  Claude context.
+
 ## [2.4.0] - 2026-05-02
 
 ### Added
