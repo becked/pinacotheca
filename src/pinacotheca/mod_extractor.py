@@ -21,20 +21,30 @@ to stamp per-sprite ``authors`` and surface bylines.
 
 Publication approval
 --------------------
-:data:`APPROVED_AUTHORS` is an allowlist of creators who have granted
-explicit approval for their work to appear in the deployed pinacotheca
-gallery. A mod sprite ships only when **every** credited author is in
-the set; sprites with no resolved authors are filtered too (no
-approval). Extraction still writes every mod file to disk locally
-(so a user with the mod installed can use the output for per-ankh or
-other tools), but :func:`compute_excluded_mod_globs` returns the
+:data:`APPROVED_AUTHORS_BY_MOD` is a per-mod allowlist of creators who
+have granted explicit approval for **that specific mod's** images to
+appear in the deployed pinacotheca gallery. A sprite ships only when:
+
+  - Its mod slug has an entry in the dict, AND
+  - Every credited author is in that mod's approved set.
+
+Sprites with no resolved authors are filtered too (no approval to
+publish). The per-mod shape matches how approval actually works in
+practice — an artist says "yes, you can use my work for this mod,"
+not "yes, you can use anything credited to me anywhere." A new mod
+installed tomorrow is filtered by default even if all the names it
+credits appear in some other mod's approval entry.
+
+Extraction still writes every mod file to disk locally (so a user
+with the mod installed can use the output for per-ankh or other
+tools), but :func:`compute_excluded_mod_globs` returns the
 file-path globs the gallery-filter mechanism uses to keep
 unapproved files out of the deployed manifest and the gh-pages bundle.
 
-When an author grants approval, add their name to
-``APPROVED_AUTHORS`` and rerun ``pinacotheca-mods``; the gallery
-filter sidecar gets rewritten automatically and the gallery's Mods
-section updates on the next manifest build.
+When an author grants approval for a specific mod, add a (slug, names)
+entry to ``APPROVED_AUTHORS_BY_MOD`` and rerun ``pinacotheca-mods``;
+the gallery filter sidecar gets rewritten automatically and the
+gallery's Mods section updates on the next manifest build.
 """
 
 from __future__ import annotations
@@ -107,27 +117,29 @@ def _resolved_attribution(slug: str, primary_author: str) -> dict[str, Any]:
     return {"default": default, "overrides": overrides}
 
 
-# Mod creators who have explicitly approved publication of their work
-# in the deployed pinacotheca gallery. A sprite ships only when ALL of
-# its credited authors are in this set; sprites with no resolved
-# authors are filtered out as well (no approval). Files still get
-# rendered locally so the user can consume them via per-ankh or
-# Finder; only the gallery manifest + gh-pages deploy filter them
-# out. See the module docstring for the policy rationale.
+# Per-mod allowlist of authors approved to publish that mod's images
+# in the deployed pinacotheca gallery. A sprite ships only when its
+# mod has an entry here AND every credited author appears in that
+# mod's approved set. Sprites with no resolved authors are filtered.
+# Files still get rendered locally so the user can consume them via
+# per-ankh or Finder; only the gallery manifest + gh-pages deploy
+# filter them out. See the module docstring for the policy rationale.
 #
-# To add an author: confirm explicit approval, then append their name
-# here and rerun `pinacotheca-mods` (or any command that writes the
-# gallery-filter sidecar).
-APPROVED_AUTHORS: frozenset[str] = frozenset(
-    {
-        "Dale Kent",  # Byzantine Empire mod
-        "Harry",  # Dynamic Unit mod
-        "And",  # Co-credited on Dynamic Unit icons and NSG; approval
-        #              given via Discord with the condition that he be
-        #              credited on every published image (already
-        #              handled via _MOD_ATTRIBUTION).
-    }
-)
+# To add a mod / author: confirm explicit approval for that specific
+# mod, then add or extend the entry below and rerun `pinacotheca-mods`
+# (or any command that writes the gallery-filter sidecar).
+APPROVED_AUTHORS_BY_MOD: dict[str, frozenset[str]] = {
+    "byzantine-empire": frozenset({"Dale Kent"}),
+    "dynamic-unit": frozenset(
+        {
+            "Harry",
+            # And approved Dynamic Unit's images via Discord with the
+            # condition he be credited on each one (handled via
+            # _MOD_ATTRIBUTION). Approval is scoped to this mod only.
+            "And",
+        }
+    ),
+}
 
 
 def _resolve_authors_for_sprite(
@@ -154,12 +166,14 @@ def _resolve_authors_for_sprite(
 def compute_excluded_mod_globs(output_dir: Path) -> list[str]:
     """Walk every extracted mod and return file-path globs (relative to
     ``extracted/sprites/``) for sprites that are NOT cleared by
-    :data:`APPROVED_AUTHORS`.
+    :data:`APPROVED_AUTHORS_BY_MOD`.
 
     A sprite is filtered when any of:
-      - It has no resolved authors (we have no one to ask for approval).
-      - At least one of its authors is missing from
-        :data:`APPROVED_AUTHORS`.
+      - Its mod slug has no entry in :data:`APPROVED_AUTHORS_BY_MOD`
+        (new mods are filtered by default — no approval).
+      - It has no resolved authors (no one to ask for approval).
+      - At least one of its authors is missing from that mod's
+        approved set.
 
     Emits one literal-path glob per matching ``.png`` plus a parallel
     glob for the ``.json`` render-metadata sidecar that lives next to
@@ -185,15 +199,16 @@ def compute_excluded_mod_globs(output_dir: Path) -> list[str]:
             continue
         attribution = mod_info.get("attribution")
         fallback = mod_info.get("author", "")
+        approved = APPROVED_AUTHORS_BY_MOD.get(mod_dir.name)
         for sub_dir in sorted(mod_dir.iterdir()):
             if not sub_dir.is_dir():
                 continue
             for png_path in sorted(sub_dir.glob("*.png")):
                 authors = _resolve_authors_for_sprite(png_path.stem, attribution, fallback)
-                # Ship only when every credited author is in the
-                # approved set AND we have at least one author. Empty
-                # author lists fail (no approval to publish).
-                if authors and set(authors).issubset(APPROVED_AUTHORS):
+                # Ship only when this mod has an approval entry, we
+                # have at least one credited author, and every author
+                # is in the mod's approved set.
+                if approved is not None and authors and set(authors).issubset(approved):
                     continue
                 rel = f"mods/{mod_dir.name}/{sub_dir.name}/{png_path.name}"
                 globs.add(rel)

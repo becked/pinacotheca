@@ -134,33 +134,39 @@ same logic.
 - **Lightbox**: shows "from `<Mod Name>` · by X & Y" in the metadata
   area for mod sprites.
 
-## Publication approval — `APPROVED_AUTHORS`
+## Publication approval — `APPROVED_AUTHORS_BY_MOD`
 
-Mod content ships through the deployed gallery only when **every**
-credited author has granted explicit approval. The allowlist lives in
+Mod content ships through the deployed gallery only when its **mod**
+has an explicit approval entry **and** every credited author for the
+sprite is in that mod's approved set. The allowlist lives in
 `mod_extractor.py`:
 
 ```python
-APPROVED_AUTHORS: frozenset[str] = frozenset(
-    {
-        "Dale Kent",  # Byzantine Empire mod
-        "Harry",      # Dynamic Unit mod
-    }
-)
+APPROVED_AUTHORS_BY_MOD: dict[str, frozenset[str]] = {
+    "byzantine-empire": frozenset({"Dale Kent"}),
+    "dynamic-unit": frozenset({"Harry", "And"}),
+}
 ```
 
-This is an **allowlist**, not a blocklist. The default for any author
-not in the set is "filtered." That includes:
+This is a **per-mod allowlist**. Approval is scoped to a specific mod
+— "Harry approves Dynamic Unit's images" doesn't grant blanket
+approval for everything credited to Harry across other mods. The
+default for any mod without an entry is "filtered."
 
-- Authors we haven't asked yet (e.g. Maniac, Revan, And as of writing).
-- Authors who have explicitly opted out (e.g. Shirotora Kenshin).
+That filters out:
+
+- Mods we haven't asked about yet (Greek Dynasties as of writing).
+- Mods whose authors have opted out for that mod (NSG → Shirotora
+  Kenshin opted out).
 - Sprites with no resolved authors at all (e.g. Dynamic World, where
   ModInfo's `<author>` is empty and we have no entry in
   `_MOD_ATTRIBUTION`) — no one to ask, so no approval.
+- Future-installed mods whose authors happen to match someone
+  approved elsewhere — they require their own entry.
 
-The mechanism follows the credits, not file paths — so any mod that
-bundles work by an unapproved collaborator has those files filtered
-out automatically as long as `_MOD_ATTRIBUTION` credits them.
+The mechanism follows the (mod, credits) pair, not file paths — so any
+sprite where a credited author isn't approved *for that mod* gets
+filtered, as long as `_MOD_ATTRIBUTION` reflects the credits.
 
 ### How it works
 
@@ -171,9 +177,10 @@ out automatically as long as `_MOD_ATTRIBUTION` credits them.
 2. **At sidecar-write time**, `compute_excluded_mod_globs(output_dir)`
    walks every mod's `mod.json`, resolves each `.png` file's authors
    against the attribution table, and emits literal-path globs for
-   sprites where any author is missing from `APPROVED_AUTHORS` (or
-   the author list is empty). Both the `.png` and its `.json`
-   render-metadata sidecar are added.
+   sprites that either (a) belong to a mod with no entry in
+   `APPROVED_AUTHORS_BY_MOD`, (b) have an empty author list, or (c)
+   credit any author not in the mod's approved set. Both the `.png`
+   and its `.json` render-metadata sidecar are added.
 
 3. **The gallery-filter sidecar** (`extracted/.gallery-filter.json`)
    merges these dynamic globs with the static `GALLERY_EXCLUDE_GLOBS`
@@ -187,20 +194,22 @@ out automatically as long as `_MOD_ATTRIBUTION` credits them.
 4. **Mods with zero remaining sprites are dropped from the manifest's
    `mods[]` automatically** — `scanMods` in `generate-manifest.ts` only
    appends an entry when `count > 0`. As of the initial allowlist
-   (Dale Kent + Harry), NSG, Dynamic World, and Greek Dynasties all
-   disappear from the Mods section.
+   (Byzantine Empire + Dynamic Unit), NSG, Dynamic World, and Greek
+   Dynasties all disappear from the Mods section.
 
 ### Granting / revoking approval
 
-To add an author when you have explicit permission:
+To add a mod (or extend an existing entry's approved authors):
 
-1. Append their name to `APPROVED_AUTHORS`.
-2. Re-run `pinacotheca-mods` (or any command that writes the sidecar
+1. Confirm explicit approval **for that specific mod**.
+2. Add or extend the entry in `APPROVED_AUTHORS_BY_MOD`.
+3. Re-run `pinacotheca-mods` (or any command that writes the sidecar
    — `pinacotheca`, `pinacotheca-web-build`).
 
 To remove approval (e.g. an author changes their stance):
 
-1. Remove their name from `APPROVED_AUTHORS`.
+1. Remove their name from the relevant mod's set, or delete the
+   whole entry if no one's left.
 2. Re-run as above.
 
 The sidecar is rewritten on every run, so changes to the allowlist

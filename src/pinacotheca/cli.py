@@ -22,7 +22,7 @@ from pinacotheca.extractor import (
     extract_urban_composite_meshes,
     extract_vegetation_meshes,
 )
-from pinacotheca.gallery_filter import GALLERY_EXCLUDE_GLOBS, write_filter_sidecar
+from pinacotheca.gallery_filter import write_filter_sidecar
 from pinacotheca.mod_extractor import compute_excluded_mod_globs, extract_mod_assets
 
 
@@ -121,7 +121,7 @@ Examples:
         if not args.quiet:
             print(f"Wrote gallery filter sidecar: {sidecar}")
             if extra_globs:
-                print(f"  + {len(extra_globs)} mod sprite(s) gated behind APPROVED_AUTHORS")
+                print(f"  + {len(extra_globs)} mod sprite(s) gated behind APPROVED_AUTHORS_BY_MOD")
 
     except FileNotFoundError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -575,7 +575,7 @@ def mods() -> None:
         if not args.quiet:
             print(f"\nWrote gallery filter sidecar: {sidecar}")
             if extra_globs:
-                print(f"  + {len(extra_globs)} mod sprite(s) gated behind APPROVED_AUTHORS")
+                print(f"  + {len(extra_globs)} mod sprite(s) gated behind APPROVED_AUTHORS_BY_MOD")
     except ImportError:
         sys.exit(1)
 
