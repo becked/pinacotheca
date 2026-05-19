@@ -1,0 +1,29 @@
+{
+  "slug": "the-greek-dynasties",
+  "displayName": "The Greek Dynasties",
+  "author": "Maniac",
+  "version": "",
+  "description": "This mod aims to increase the replay value of the Old World premade map. This is done by adding new leaders/dynasties, that all start at a different city site. So the ultimate goal would be to have a leader for each city site. For now the focus lies mostly on the Greek, as they colonized most of the Mediterranean.\n  \n  The mod splits Greece into two nations: Greece and Makedon. Makedon has as Families Argead, Ptolemaic, Seleucid and Attalid. Greece now has as families Ionian, Dorian, Aeolian and Pelasgian.\n  Five leaders/dynasties have been added: Pygmalion of Tyre for Carthage, Priam of Troy and Minos of Crete for Greece, and Seleucus and Philetairos of Pergamon for Makedon.\n  Priam of Troy allows you to start at Troy, and gives you familiar characters like Hector, Paris and Helene.\n  Pygmalion of Tyre (Dido's brother) starts you off with settlers both at Tyre and Carthage.\n  The Minoans start in Crete with a Labyrinth and Palace in its capital, and a Bireme unit to make anchoring immediately available. It's also the perfect dynasty to try out a feature added by the \"Eureka\" companion mod: resource caravans: build a Fair on the Olives, build a Shopkeeper specialist, and then you can produce Olive Caravans which allow you to send Olives to specific foreign cities rather than just the capitals.\n  Seleucus and Philetairos fill up the cast for Makedon, so there's a representative for each family.\n  \n  To start with those leaders on the (modified) Old World map, you need to start on the premade map \"Maniac's World\". The map also features some other changes, a notable one being the addition of Cedarwood, Papyrus and Silphium map resources around respectively Tyre, the Nile Delta and Cyrene. As I don't have the faintest clue how to add new graphics to the game , I used the icons provided in the Resources+ mod by Revan. Credit to you!",
+  "attribution": {
+    "default": [
+      "Maniac"
+    ],
+    "overrides": [
+      {
+        "pattern": "^UNIT_3D_",
+        "authors": [
+          "Maniac",
+          "Shirotora Kenshin"
+        ]
+      },
+      {
+        "pattern": "^RESOURCE_",
+        "authors": [
+          "Maniac",
+          "Revan"
+        ]
+      }
+    ]
+  },
+  "extractedAt": "2026-05-19T21:35:33.622649+00:00"
+}

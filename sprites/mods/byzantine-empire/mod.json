@@ -1,0 +1,14 @@
+{
+  "slug": "byzantine-empire",
+  "displayName": "Byzantine Empire",
+  "author": "Dale Kent",
+  "version": "1.27",
+  "description": "The Byzantine Empire, often called the Eastern Roman Empire or simply Byzantium, existed from 330 to 1453 CE. With its capital founded at Constantinople by Constantine I (r. 306-337 CE), the Empire varied in size over the centuries, at one time or another, possessing territories located in Italy, Greece, the Balkans, Levant, Asia Minor, and North Africa. A Christian state with Greek as the official language, the Byzantines developed their own political systems, religious practices, art and architecture, which, although significantly influenced by the Greco-Roman cultural tradition, were distinct and not merely a continuation of ancient Rome. The Byzantine Empire was the longest-lasting medieval power, and its influence continues today, especially in the religion, art, architecture, and law of many Western states, Eastern and Central Europe, and Russia.\n\nByzantine is lead by Constantine I (Builder-Eloquent), Irene (Schemer-Cunning), and Justinian (Judge-Pious).\nNation Abilities: +1 fatigue limit, [All Cities] +40% culture +25% money.\n\nDynasties: \n- Constantine: Builder (can build urban, multiple workers can build improvements, [All Cities] -50% build time for workers), Eloquent (Governor +2 civics per culture level).\n- Irene & Constantine VI: Schemer (use Legitimacy to buy Orders, 1 Order per turn per war, Scouts are invisible, can Adopt Child, increased adent yields), Cunning (Governor unlock caravans, Leader +20 Foreign & Tribe Leader opinions).\n- Justinian & Theodora: Judge (Governor can hurry projects, specialists with money, Leader can switch laws for 100 Civics, can upgrade improvements, can Hold Court), Pious (Governor of State Religion city +2 happy per turn, +5% culture, as Leader +5% state religion spread chance).\n\nFamilies: Calogera (Clerics), Kantakouzenos (Landowners), Phokas (Champions), Doukas (Traders).\nStarting Techs: Ironworking, Administration, Sovereignty.\n\nUnique Units: Comitatenses (Melee-Infantry, 6 Str, can Testudo, -2 iron), Palatini (Melee-Infantry, 8 Str, can Testudo, -2 training -4 iron).\nUnique Shrines: Nestoria (+2 civics, +2 culture), Monophysite (+5 culture), Gnosis (+2 culture, +2 science), Paulicia (+2 training, +2 culture).\nUnique Religion: Byzantine Paganism.",
+  "attribution": {
+    "default": [
+      "Dale Kent"
+    ],
+    "overrides": []
+  },
+  "extractedAt": "2026-05-19T21:35:32.842036+00:00"
+}

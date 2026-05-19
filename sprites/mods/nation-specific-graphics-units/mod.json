@@ -1,0 +1,16 @@
+{
+  "slug": "nation-specific-graphics-units",
+  "displayName": "Nation Specific Graphics - Units",
+  "author": "Shirotora Kenshin",
+  "version": "1.0.3",
+  "description": "This mod adds unique models to the Swordsman unit, for all 10 nations. The other units will hopefully get the same attention with time. \n\nCredits: \nAnd (Research),\nMohawk Games (for their fantastic 'Old World' Game),\nHarry (C# DLL Modding),\nShirotora Kenshin (3D Artwork, XML).",
+  "attribution": {
+    "default": [
+      "Shirotora Kenshin",
+      "And",
+      "Harry"
+    ],
+    "overrides": []
+  },
+  "extractedAt": "2026-05-19T21:35:33.282079+00:00"
+}
