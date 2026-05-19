@@ -121,7 +121,7 @@ Examples:
         if not args.quiet:
             print(f"Wrote gallery filter sidecar: {sidecar}")
             if extra_globs:
-                print(f"  + {len(extra_globs)} artist-opt-out exclusion(s)")
+                print(f"  + {len(extra_globs)} mod sprite(s) gated behind APPROVED_AUTHORS")
 
     except FileNotFoundError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -575,7 +575,7 @@ def mods() -> None:
         if not args.quiet:
             print(f"\nWrote gallery filter sidecar: {sidecar}")
             if extra_globs:
-                print(f"  + {len(extra_globs)} artist-opt-out exclusion(s)")
+                print(f"  + {len(extra_globs)} mod sprite(s) gated behind APPROVED_AUTHORS")
     except ImportError:
         sys.exit(1)
 

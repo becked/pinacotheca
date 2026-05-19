@@ -38,8 +38,8 @@ GALLERY_EXCLUDE_REASON: str = (
     "consumed by per-ankh from the local `extracted/` tree; they are not "
     "needed by the deployed SvelteKit gallery so are excluded from the "
     "gh-pages bundle. Additional dynamic entries may be appended at "
-    "extraction time to honor artist opt-outs for mod content — see "
-    "`pinacotheca.mod_extractor.EXCLUDED_AUTHORS`."
+    "extraction time to gate mod content behind explicit author approval — "
+    "see `pinacotheca.mod_extractor.APPROVED_AUTHORS`."
 )
 
 

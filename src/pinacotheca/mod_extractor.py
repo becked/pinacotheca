@@ -19,18 +19,22 @@ display name, author, version, description, and a resolved
 ``attribution`` table. The web gallery's manifest builder reads these
 to stamp per-sprite ``authors`` and surface bylines.
 
-Artist opt-outs
----------------
-:data:`EXCLUDED_AUTHORS` lists creators who have asked that their work
-not be published through pinacotheca. Extraction still writes their
-files to disk locally (so a user with the mod installed can use the
-output for per-ankh or other tools), but
-:func:`compute_excluded_mod_globs` returns the file-path globs the
-gallery-filter mechanism uses to keep those files out of the deployed
-manifest and the gh-pages bundle. To honor a new opt-out: add the
-artist name to ``EXCLUDED_AUTHORS`` and rerun ``pinacotheca-mods``;
-the gallery filter sidecar gets rewritten automatically and the
-gallery's Mods section updates on the next manifest build.
+Publication approval
+--------------------
+:data:`APPROVED_AUTHORS` is an allowlist of creators who have granted
+explicit approval for their work to appear in the deployed pinacotheca
+gallery. A mod sprite ships only when **every** credited author is in
+the set; sprites with no resolved authors are filtered too (no
+approval). Extraction still writes every mod file to disk locally
+(so a user with the mod installed can use the output for per-ankh or
+other tools), but :func:`compute_excluded_mod_globs` returns the
+file-path globs the gallery-filter mechanism uses to keep
+unapproved files out of the deployed manifest and the gh-pages bundle.
+
+When an author grants approval, add their name to
+``APPROVED_AUTHORS`` and rerun ``pinacotheca-mods``; the gallery
+filter sidecar gets rewritten automatically and the gallery's Mods
+section updates on the next manifest build.
 """
 
 from __future__ import annotations
@@ -103,14 +107,23 @@ def _resolved_attribution(slug: str, primary_author: str) -> dict[str, Any]:
     return {"default": default, "overrides": overrides}
 
 
-# Mod creators who have asked that their work not appear in the
-# deployed pinacotheca gallery. Files still get rendered locally so
-# the user can consume them via per-ankh or Finder; only the gallery
-# manifest + gh-pages deploy filter them out. See module docstring.
+# Mod creators who have explicitly approved publication of their work
+# in the deployed pinacotheca gallery. A sprite ships only when ALL of
+# its credited authors are in this set; sprites with no resolved
+# authors are filtered out as well (no approval). Files still get
+# rendered locally so the user can consume them via per-ankh or
+# Finder; only the gallery manifest + gh-pages deploy filter them
+# out. See the module docstring for the policy rationale.
 #
-# 2026-05: Shirotora Kenshin (3D artist on NSG and Greek Dynasties'
-# Greek Swordsman) requested removal of his 3D models.
-EXCLUDED_AUTHORS: frozenset[str] = frozenset({"Shirotora Kenshin"})
+# To add an author: confirm explicit approval, then append their name
+# here and rerun `pinacotheca-mods` (or any command that writes the
+# gallery-filter sidecar).
+APPROVED_AUTHORS: frozenset[str] = frozenset(
+    {
+        "Dale Kent",  # Byzantine Empire mod
+        "Harry",  # Dynamic Unit mod
+    }
+)
 
 
 def _resolve_authors_for_sprite(
@@ -136,8 +149,13 @@ def _resolve_authors_for_sprite(
 
 def compute_excluded_mod_globs(output_dir: Path) -> list[str]:
     """Walk every extracted mod and return file-path globs (relative to
-    ``extracted/sprites/``) for files whose resolved attribution
-    intersects :data:`EXCLUDED_AUTHORS`.
+    ``extracted/sprites/``) for sprites that are NOT cleared by
+    :data:`APPROVED_AUTHORS`.
+
+    A sprite is filtered when any of:
+      - It has no resolved authors (we have no one to ask for approval).
+      - At least one of its authors is missing from
+        :data:`APPROVED_AUTHORS`.
 
     Emits one literal-path glob per matching ``.png`` plus a parallel
     glob for the ``.json`` render-metadata sidecar that lives next to
@@ -148,8 +166,6 @@ def compute_excluded_mod_globs(output_dir: Path) -> list[str]:
     """
     mods_root = output_dir / "sprites" / "mods"
     if not mods_root.is_dir():
-        return []
-    if not EXCLUDED_AUTHORS:
         return []
 
     globs: set[str] = set()
@@ -170,7 +186,10 @@ def compute_excluded_mod_globs(output_dir: Path) -> list[str]:
                 continue
             for png_path in sorted(sub_dir.glob("*.png")):
                 authors = _resolve_authors_for_sprite(png_path.stem, attribution, fallback)
-                if not EXCLUDED_AUTHORS.intersection(authors):
+                # Ship only when every credited author is in the
+                # approved set AND we have at least one author. Empty
+                # author lists fail (no approval to publish).
+                if authors and set(authors).issubset(APPROVED_AUTHORS):
                     continue
                 rel = f"mods/{mod_dir.name}/{sub_dir.name}/{png_path.name}"
                 globs.add(rel)

@@ -134,31 +134,46 @@ same logic.
 - **Lightbox**: shows "from `<Mod Name>` · by X & Y" in the metadata
   area for mod sprites.
 
-## Artist opt-out — `EXCLUDED_AUTHORS`
+## Publication approval — `APPROVED_AUTHORS`
 
-Some creators ask that their work not appear in the deployed
-pinacotheca gallery. `EXCLUDED_AUTHORS` in `mod_extractor.py`:
+Mod content ships through the deployed gallery only when **every**
+credited author has granted explicit approval. The allowlist lives in
+`mod_extractor.py`:
 
 ```python
-EXCLUDED_AUTHORS: frozenset[str] = frozenset({"Shirotora Kenshin"})
+APPROVED_AUTHORS: frozenset[str] = frozenset(
+    {
+        "Dale Kent",  # Byzantine Empire mod
+        "Harry",      # Dynamic Unit mod
+    }
+)
 ```
 
+This is an **allowlist**, not a blocklist. The default for any author
+not in the set is "filtered." That includes:
+
+- Authors we haven't asked yet (e.g. Maniac, Revan, And as of writing).
+- Authors who have explicitly opted out (e.g. Shirotora Kenshin).
+- Sprites with no resolved authors at all (e.g. Dynamic World, where
+  ModInfo's `<author>` is empty and we have no entry in
+  `_MOD_ATTRIBUTION`) — no one to ask, so no approval.
+
 The mechanism follows the credits, not file paths — so any mod that
-bundles work by an excluded author has those files filtered out
-automatically as long as `_MOD_ATTRIBUTION` credits them.
+bundles work by an unapproved collaborator has those files filtered
+out automatically as long as `_MOD_ATTRIBUTION` credits them.
 
 ### How it works
 
 1. **Extraction proceeds normally.** All sprites get written to disk,
-   including those by excluded authors. The local user retains every
-   file the mod offers — useful for per-ankh, Finder browsing, or local
-   inspection.
+   regardless of approval. The local user retains every file the mod
+   offers — useful for per-ankh, Finder browsing, or local inspection.
 
 2. **At sidecar-write time**, `compute_excluded_mod_globs(output_dir)`
    walks every mod's `mod.json`, resolves each `.png` file's authors
    against the attribution table, and emits literal-path globs for
-   files whose authors intersect `EXCLUDED_AUTHORS`. Both the `.png`
-   and its `.json` render-metadata sidecar are added.
+   sprites where any author is missing from `APPROVED_AUTHORS` (or
+   the author list is empty). Both the `.png` and its `.json`
+   render-metadata sidecar are added.
 
 3. **The gallery-filter sidecar** (`extracted/.gallery-filter.json`)
    merges these dynamic globs with the static `GALLERY_EXCLUDE_GLOBS`
@@ -171,20 +186,25 @@ automatically as long as `_MOD_ATTRIBUTION` credits them.
 
 4. **Mods with zero remaining sprites are dropped from the manifest's
    `mods[]` automatically** — `scanMods` in `generate-manifest.ts` only
-   appends an entry when `count > 0`. NSG (entirely Shirotora
-   Kenshin's work) disappears from the Mods section; Greek Dynasties
-   stays with its 9 RESOURCE_* icons (2 UNIT_3D_* removed).
+   appends an entry when `count > 0`. As of the initial allowlist
+   (Dale Kent + Harry), NSG, Dynamic World, and Greek Dynasties all
+   disappear from the Mods section.
 
-### Reversibility
+### Granting / revoking approval
 
-If an author later changes their stance:
+To add an author when you have explicit permission:
 
-1. Remove their name from `EXCLUDED_AUTHORS`.
+1. Append their name to `APPROVED_AUTHORS`.
 2. Re-run `pinacotheca-mods` (or any command that writes the sidecar
    — `pinacotheca`, `pinacotheca-web-build`).
 
-The sidecar is rewritten with the artist's globs removed; the next
-manifest build picks them up and the Mods section repopulates.
+To remove approval (e.g. an author changes their stance):
+
+1. Remove their name from `APPROVED_AUTHORS`.
+2. Re-run as above.
+
+The sidecar is rewritten on every run, so changes to the allowlist
+propagate to both the SvelteKit manifest and the next deploy.
 
 ### Pattern contract
 

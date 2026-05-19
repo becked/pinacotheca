@@ -71,7 +71,7 @@ and units (with both FRONT and BACK views since mod authors don't
 share a canonical facing direction). 2D mod sprites are saved
 directly. Each mod's sprites are credited per-image in the gallery's
 Mods section — see `docs/mod-extraction.md` for the attribution table
-and the artist-opt-out mechanism (`EXCLUDED_AUTHORS`).
+and the approval-based publication policy (`APPROVED_AUTHORS`).
 
 ```bash
 # Re-extract only mods (faster than the full pipeline)
