@@ -122,6 +122,10 @@ APPROVED_AUTHORS: frozenset[str] = frozenset(
     {
         "Dale Kent",  # Byzantine Empire mod
         "Harry",  # Dynamic Unit mod
+        "And",  # Co-credited on Dynamic Unit icons and NSG; approval
+        #              given via Discord with the condition that he be
+        #              credited on every published image (already
+        #              handled via _MOD_ATTRIBUTION).
     }
 )
 
