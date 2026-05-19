@@ -1,15 +1,17 @@
 <script lang="ts">
 	import { base } from '$app/paths';
-	import type { Sprite, CategoryData, FilterState } from '$lib/types';
+	import type { Sprite, CategoryData, FilterState, ModEntry } from '$lib/types';
 	import SpriteCard from './SpriteCard.svelte';
 	import { getCategoryInfo } from '$lib/utils/categories';
 
 	interface Props {
 		sprites: Sprite[];
 		categories: Record<string, CategoryData>;
+		mods: ModEntry[];
 		filters: FilterState;
 		onSearch: (query: string) => void;
 		onCategoryChange: (category: string | null) => void;
+		onModChange: (slug: string | null) => void;
 		onClearAll: () => void;
 		onSpriteClick: (sprite: Sprite) => void;
 	}
@@ -17,15 +19,27 @@
 	let {
 		sprites,
 		categories,
+		mods,
 		filters,
 		onSearch,
 		onCategoryChange,
+		onModChange,
 		onClearAll,
 		onSpriteClick
 	}: Props = $props();
 
+	let activeMod = $derived(
+		filters.mod ? mods.find((m) => m.slug === filters.mod) : undefined
+	);
+
 	let resultSummary = $derived.by(() => {
 		const count = sprites.length.toLocaleString();
+		if (activeMod) {
+			if (filters.query) {
+				return `${count} results for "${filters.query}" in ${activeMod.displayName}`;
+			}
+			return `${count} sprites in ${activeMod.displayName}`;
+		}
 		if (filters.query && filters.category) {
 			const catInfo = getCategoryInfo(filters.category);
 			return `${count} results for "${filters.query}" in ${catInfo.displayName}`;
@@ -101,19 +115,46 @@
 			&larr; Back to Browse
 		</button>
 		<span style="color: var(--color-muted);">|</span>
-		<select
-			value={filters.category ?? ''}
-			onchange={(e) => onCategoryChange((e.target as HTMLSelectElement).value || null)}
-			style="padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 0.375rem; background-color: var(--color-background); color: var(--color-foreground); font-size: 0.875rem;"
-		>
-			<option value="">All Categories</option>
-			{#each sortedCategories as [cat, data]}
-				<option value={cat}>{data.displayName} ({data.count})</option>
-			{/each}
-		</select>
+		{#if activeMod}
+			<select
+				value={filters.mod ?? ''}
+				onchange={(e) => onModChange((e.target as HTMLSelectElement).value || null)}
+				style="padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 0.375rem; background-color: var(--color-background); color: var(--color-foreground); font-size: 0.875rem;"
+			>
+				{#each mods as mod (mod.slug)}
+					<option value={mod.slug}>{mod.displayName} ({mod.count})</option>
+				{/each}
+			</select>
+		{:else}
+			<select
+				value={filters.category ?? ''}
+				onchange={(e) => onCategoryChange((e.target as HTMLSelectElement).value || null)}
+				style="padding: 0.5rem 1rem; border: 1px solid var(--color-border); border-radius: 0.375rem; background-color: var(--color-background); color: var(--color-foreground); font-size: 0.875rem;"
+			>
+				<option value="">All Categories</option>
+				{#each sortedCategories as [cat, data]}
+					<option value={cat}>{data.displayName} ({data.count})</option>
+				{/each}
+			</select>
+		{/if}
 		<span style="color: var(--color-muted); margin-left: auto; font-size: 0.875rem;">{resultSummary}</span>
 	</div>
 </section>
+
+{#if activeMod}
+	<!-- Mod attribution byline - subtle, focus stays on the art -->
+	<section style="margin-top: 12px; width: 90%; margin-left: auto; margin-right: auto;">
+		<div style="max-width: 800px; margin: 0 auto; padding: 0 1.5rem; display: flex; align-items: baseline; gap: 0.5rem; color: var(--color-muted); font-size: 0.8125rem;">
+			<span style="font-style: italic;">
+				by {activeMod.author || 'unknown'}
+			</span>
+			{#if activeMod.version}
+				<span>&middot;</span>
+				<span>v{activeMod.version}</span>
+			{/if}
+		</div>
+	</section>
+{/if}
 
 <!-- Results Section - Brown, 90% width -->
 <section style="background-color: var(--color-surface); margin-top: 16px; width: 90%; margin-left: auto; margin-right: auto;">

@@ -5,6 +5,7 @@ Provides commands for extracting sprites, generating galleries, and deploying to
 """
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -22,6 +23,7 @@ from pinacotheca.extractor import (
     extract_vegetation_meshes,
 )
 from pinacotheca.gallery_filter import GALLERY_EXCLUDE_GLOBS, write_filter_sidecar
+from pinacotheca.mod_extractor import compute_excluded_mod_globs, extract_mod_assets
 
 
 def main() -> None:
@@ -60,6 +62,11 @@ Examples:
         "--no-meshes",
         action="store_true",
         help="Skip 3D mesh extraction (renders unit and building models to 2D images)",
+    )
+    parser.add_argument(
+        "--no-mods",
+        action="store_true",
+        help="Skip extraction of installed mods' visual assets",
     )
 
     args = parser.parse_args()
@@ -103,9 +110,18 @@ Examples:
                 verbose=not args.quiet,
             )
 
-        sidecar = write_filter_sidecar(args.output)
+        if not args.no_mods:
+            extract_mod_assets(
+                output_dir=args.output,
+                verbose=not args.quiet,
+            )
+
+        extra_globs = compute_excluded_mod_globs(args.output)
+        sidecar = write_filter_sidecar(args.output, extra_globs=extra_globs)
         if not args.quiet:
             print(f"Wrote gallery filter sidecar: {sidecar}")
+            if extra_globs:
+                print(f"  + {len(extra_globs)} artist-opt-out exclusion(s)")
 
     except FileNotFoundError as e:
         print(f"ERROR: {e}", file=sys.stderr)
@@ -316,7 +332,15 @@ Examples:
         print("         This will likely exceed GitHub Pages' 1 GB site limit.")
         excludes: list[str] = []
     else:
-        excludes = list(GALLERY_EXCLUDE_GLOBS)
+        # Read from the sidecar so dynamic exclusions (artist opt-outs
+        # appended at extraction time, see mod_extractor.EXCLUDED_AUTHORS)
+        # are honored alongside the static GALLERY_EXCLUDE_GLOBS list.
+        try:
+            sidecar_data = json.loads(sidecar.read_text())
+            excludes = list(sidecar_data.get("excludeGlobs") or [])
+        except (OSError, ValueError) as e:
+            print(f"ERROR: Failed to read sidecar {sidecar}: {e}", file=sys.stderr)
+            sys.exit(1)
 
     if shutil.which("rsync") is None:
         print("ERROR: rsync not found on PATH.", file=sys.stderr)
@@ -494,7 +518,7 @@ def web_build() -> None:
     # before (so `npm run manifest` can read it) and after (so deploy() can).
     extracted_dir = web_dir.parent / "extracted"
     if (extracted_dir / "sprites").exists():
-        write_filter_sidecar(extracted_dir)
+        write_filter_sidecar(extracted_dir, extra_globs=compute_excluded_mod_globs(extracted_dir))
 
     try:
         subprocess.run(["npm", "run", "build"], cwd=web_dir, check=True)
@@ -505,8 +529,55 @@ def web_build() -> None:
         sys.exit(e.returncode)
 
     if extracted_dir.exists():
-        sidecar = write_filter_sidecar(extracted_dir)
+        sidecar = write_filter_sidecar(
+            extracted_dir, extra_globs=compute_excluded_mod_globs(extracted_dir)
+        )
         print(f"Restored gallery filter sidecar: {sidecar}")
+
+
+def mods() -> None:
+    """Extract assets from installed Old World mods without re-running the
+    base-game extraction. Useful when you've installed a new mod and want
+    to refresh just its outputs.
+    """
+    parser = argparse.ArgumentParser(
+        description="Extract visual assets from installed Old World mods",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=Path.cwd() / "extracted",
+        help="Output directory (default: ./extracted)",
+    )
+    parser.add_argument(
+        "--mods-dir",
+        type=Path,
+        default=None,
+        help="Mods directory (auto-detected if not specified)",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Suppress progress output",
+    )
+
+    args = parser.parse_args()
+    try:
+        extract_mod_assets(
+            output_dir=args.output,
+            mods_dir=args.mods_dir,
+            verbose=not args.quiet,
+        )
+        extra_globs = compute_excluded_mod_globs(args.output)
+        sidecar = write_filter_sidecar(args.output, extra_globs=extra_globs)
+        if not args.quiet:
+            print(f"\nWrote gallery filter sidecar: {sidecar}")
+            if extra_globs:
+                print(f"  + {len(extra_globs)} artist-opt-out exclusion(s)")
+    except ImportError:
+        sys.exit(1)
 
 
 def atlas() -> None:

@@ -37,6 +37,11 @@
 	<span class="font-medium text-foreground group-hover:text-primary" title={sprite.name}>
 		{displayName}
 	</span>
+	{#if sprite.authors && sprite.authors.length > 0}
+		<span class="text-xs text-muted/80" style="font-style: italic;">
+			by {sprite.authors.join(' & ')}
+		</span>
+	{/if}
 	<span class="text-sm text-muted">
 		{sprite.width} x {sprite.height}
 	</span>

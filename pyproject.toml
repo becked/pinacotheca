@@ -47,6 +47,7 @@ pinacotheca-web = "pinacotheca.cli:web_dev"
 pinacotheca-web-build = "pinacotheca.cli:web_build"
 pinacotheca-deploy = "pinacotheca.cli:deploy"
 pinacotheca-atlas = "pinacotheca.cli:atlas"
+pinacotheca-mods = "pinacotheca.cli:mods"
 
 [project.urls]
 Homepage = "https://github.com/becked/pinacotheca"

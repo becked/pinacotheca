@@ -31,6 +31,7 @@
 	let filters = $state<FilterState>({
 		query: '',
 		category: null,
+		mod: null,
 		minWidth: null,
 		maxWidth: null,
 		minHeight: null,
@@ -41,9 +42,9 @@
 	// Lightbox state
 	let lightboxSprite = $state<Sprite | null>(null);
 
-	// Determine if we're in results view (has search or category filter)
+	// Determine if we're in results view (has search, category, or mod filter)
 	let isResultsView = $derived(
-		filters.query !== '' || filters.category !== null
+		filters.query !== '' || filters.category !== null || filters.mod !== null
 	);
 
 	// Sync state from URL (reactive to handle browser back/forward)
@@ -51,6 +52,7 @@
 		const url = $page.url;
 		filters.query = url.searchParams.get('q') ?? '';
 		filters.category = url.searchParams.get('cat');
+		filters.mod = url.searchParams.get('mod');
 		filters.minWidth = url.searchParams.has('minW') ? Number(url.searchParams.get('minW')) : null;
 		filters.maxWidth = url.searchParams.has('maxW') ? Number(url.searchParams.get('maxW')) : null;
 		filters.minHeight = url.searchParams.has('minH') ? Number(url.searchParams.get('minH')) : null;
@@ -76,6 +78,7 @@
 		const params = new URLSearchParams();
 		if (filters.query) params.set('q', filters.query);
 		if (filters.category) params.set('cat', filters.category);
+		if (filters.mod) params.set('mod', filters.mod);
 		if (filters.minWidth) params.set('minW', String(filters.minWidth));
 		if (filters.maxWidth) params.set('maxW', String(filters.maxWidth));
 		if (filters.minHeight) params.set('minH', String(filters.minHeight));
@@ -87,9 +90,25 @@
 		goto(newUrl, { replaceState: replace, noScroll: true, keepFocus: true });
 	}
 
-	// Apply all filters except category (for computing per-category counts)
+	// Apply all filters except category and mod (for computing per-axis counts)
 	let spritesBeforeCategoryFilter = $derived.by(() => {
 		let result: SearchableSprite[];
+
+		// Choose the starting pool:
+		//   - Mod filter active → only that mod's sprites
+		//   - mod:<slug> category active → only that mod-category's sprites
+		//   - Search query active → everything, so mod content is discoverable via search
+		//   - Otherwise (plain category browse, no search) → base-game only;
+		//     mod content stays scoped to the dedicated Mods section.
+		if (filters.mod) {
+			result = searchableSprites.filter((s) => s.modSlug === filters.mod);
+		} else if (filters.category && filters.category.startsWith('mod:')) {
+			result = searchableSprites.filter((s) => s.category === filters.category);
+		} else if (filters.query) {
+			result = searchableSprites;
+		} else {
+			result = searchableSprites.filter((s) => !s.modSlug);
+		}
 
 		// Filter by search query using substring matching
 		if (filters.query) {
@@ -101,11 +120,9 @@
 				.filter((term) => term.length > 0);
 
 			// Match sprites that contain ALL query terms (AND search)
-			result = searchableSprites.filter((s) =>
+			result = result.filter((s) =>
 				queryTerms.every((term) => s.searchText.includes(term))
 			);
-		} else {
-			result = searchableSprites;
 		}
 
 		// Filter by dimensions
@@ -173,7 +190,14 @@
 
 	function handleCategorySelect(category: string | null) {
 		filters.category = category;
+		filters.mod = null;
 		updateUrl(); // Push for navigation
+	}
+
+	function handleModSelect(slug: string | null) {
+		filters.mod = slug;
+		filters.category = null;
+		updateUrl();
 	}
 
 	function handleSpriteClick(sprite: Sprite) {
@@ -217,6 +241,7 @@
 	function clearAllFilters() {
 		filters.query = '';
 		filters.category = null;
+		filters.mod = null;
 		filters.minWidth = null;
 		filters.maxWidth = null;
 		filters.minHeight = null;
@@ -260,19 +285,23 @@
 		<ResultsView
 			sprites={filteredSprites}
 			categories={filteredCategories}
+			mods={manifest.mods}
 			{filters}
 			onSearch={handleSearch}
 			onCategoryChange={handleCategorySelect}
+			onModChange={handleModSelect}
 			onClearAll={clearAllFilters}
 			onSpriteClick={handleSpriteClick}
 		/>
 	{:else}
 		<HomeView
 			categories={manifest.categories}
+			mods={manifest.mods}
 			sprites={manifest.sprites as Sprite[]}
 			searchQuery={filters.query}
 			onSearch={handleSearch}
 			onCategorySelect={(cat) => handleCategorySelect(cat)}
+			onModSelect={(slug) => handleModSelect(slug)}
 		/>
 	{/if}
 </div>
@@ -280,6 +309,9 @@
 <!-- Lightbox -->
 {#if lightboxSprite}
 	{@const categoryInfo = getCategoryInfo(lightboxSprite.category)}
+	{@const lightboxMod = lightboxSprite.modSlug
+		? manifest.mods.find((m) => m.slug === lightboxSprite.modSlug)
+		: undefined}
 	<div
 		class="fixed inset-0 z-50 flex items-center justify-center bg-black/95"
 		onclick={closeLightbox}
@@ -310,6 +342,11 @@
 			<div class="mt-6 text-center">
 				<p class="text-xl text-foreground">{humanizeName(lightboxSprite.name)}</p>
 				<p class="mt-1 text-xs text-muted/70 font-mono">{lightboxSprite.name}</p>
+				{#if lightboxSprite.authors && lightboxSprite.authors.length > 0}
+					<p class="mt-2 text-sm text-muted" style="font-style: italic;">
+						{#if lightboxMod}from {lightboxMod.displayName} &middot; {/if}by {lightboxSprite.authors.join(' & ')}
+					</p>
+				{/if}
 				<p class="mt-1 text-sm text-muted">
 					{categoryInfo.icon}
 					{categoryInfo.displayName}

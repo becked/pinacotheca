@@ -56,6 +56,29 @@ pinacotheca -o ~/my-sprites
 
 # Specify game data location manually
 pinacotheca --game-data "/path/to/Old World/OldWorld_Data"
+
+# Skip extraction of installed mods' visual assets
+pinacotheca --no-mods
+```
+
+### Extract Mod Assets
+
+Pinacotheca scans your local Old World mods directory
+(`~/Library/Application Support/OldWorld/Mods/` on macOS) and extracts
+visual assets from each installed mod's Unity AssetBundles. 3D mod
+meshes are rendered through the same pipeline as base-game improvements
+and units (with both FRONT and BACK views since mod authors don't
+share a canonical facing direction). 2D mod sprites are saved
+directly. Each mod's sprites are credited per-image in the gallery's
+Mods section — see `docs/mod-extraction.md` for the attribution table
+and the artist-opt-out mechanism (`EXCLUDED_AUTHORS`).
+
+```bash
+# Re-extract only mods (faster than the full pipeline)
+pinacotheca-mods
+
+# Override the mods directory
+pinacotheca-mods --mods-dir ~/path/to/Mods
 ```
 
 ### Web Gallery
@@ -150,9 +173,12 @@ pinacotheca/
 │   ├── __init__.py       # Package exports (version via importlib.metadata)
 │   ├── categories.py     # Sprite categorization (regex patterns)
 │   ├── extractor.py      # UnityPy extraction logic (sprites + 3D meshes)
+│   ├── mod_scanner.py    # Discover installed mods + classify their bundles
+│   ├── mod_extractor.py  # Mod asset extraction, attribution, artist opt-outs
 │   ├── prefab.py         # GameObject walker, OBJ baker, splat/plinth filters
 │   ├── renderer.py       # moderngl 3D mesh rendering
 │   ├── atlas.py          # Texture atlas generation
+│   ├── gallery_filter.py # Deploy/manifest exclusion patterns + sidecar
 │   ├── gallery.py        # Legacy HTML gallery generator
 │   └── cli.py            # CLI entry points
 ├── web/                  # SvelteKit gallery (primary web interface)

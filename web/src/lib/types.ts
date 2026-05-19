@@ -6,6 +6,8 @@ export interface Sprite {
 	width: number;
 	height: number;
 	size: number;
+	modSlug?: string;
+	authors?: string[];
 }
 
 export interface CategoryData {
@@ -14,16 +16,27 @@ export interface CategoryData {
 	count: number;
 }
 
+export interface ModEntry {
+	slug: string;
+	displayName: string;
+	author: string;
+	version: string;
+	description: string;
+	count: number;
+}
+
 export interface Manifest {
 	generatedAt: string;
 	totalSprites: number;
 	categories: Record<string, CategoryData>;
 	sprites: Sprite[];
+	mods: ModEntry[];
 }
 
 export interface FilterState {
 	query: string;
 	category: string | null;
+	mod: string | null;
 	minWidth: number | null;
 	maxWidth: number | null;
 	minHeight: number | null;
@@ -34,6 +47,7 @@ export interface FilterState {
 export const DEFAULT_FILTER_STATE: FilterState = {
 	query: '',
 	category: null,
+	mod: null,
 	minWidth: null,
 	maxWidth: null,
 	minHeight: null,

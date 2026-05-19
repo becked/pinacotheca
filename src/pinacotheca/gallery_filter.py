@@ -37,7 +37,9 @@ GALLERY_EXCLUDE_REASON: str = (
     "Render-metadata JSON sidecars (`*.json` next to each 3D PNG) are "
     "consumed by per-ankh from the local `extracted/` tree; they are not "
     "needed by the deployed SvelteKit gallery so are excluded from the "
-    "gh-pages bundle."
+    "gh-pages bundle. Additional dynamic entries may be appended at "
+    "extraction time to honor artist opt-outs for mod content — see "
+    "`pinacotheca.mod_extractor.EXCLUDED_AUTHORS`."
 )
 
 
@@ -87,14 +89,26 @@ def matches_filter(rel_path: str, patterns: list[str] | None = None) -> bool:
     return any(p.match(rel_path) is not None for p in compiled)
 
 
-def write_filter_sidecar(extracted_dir: Path) -> Path:
-    """Write ``extracted/.gallery-filter.json``. Always overwrites."""
+def write_filter_sidecar(extracted_dir: Path, extra_globs: list[str] | None = None) -> Path:
+    """Write ``extracted/.gallery-filter.json``. Always overwrites.
+
+    ``extra_globs`` is appended after the static :data:`GALLERY_EXCLUDE_GLOBS`
+    so the same pattern contract (``*``-only, no ``?``/``[``/``**``,
+    ``*`` does not cross ``/``) is enforced via :func:`_validate_patterns`.
+    The dynamic extras let callers — currently the mod extractor's
+    artist-opt-out support — append per-file exclusions without
+    introducing a parallel filter mechanism.
+    """
+    extras: list[str] = list(extra_globs or [])
+    if extras:
+        _validate_patterns(extras)
+    combined = list(GALLERY_EXCLUDE_GLOBS) + extras
     out = extracted_dir / ".gallery-filter.json"
     out.write_text(
         json.dumps(
             {
                 "generatedAt": datetime.now(UTC).isoformat(),
-                "excludeGlobs": GALLERY_EXCLUDE_GLOBS,
+                "excludeGlobs": combined,
                 "reason": GALLERY_EXCLUDE_REASON,
             },
             indent=2,

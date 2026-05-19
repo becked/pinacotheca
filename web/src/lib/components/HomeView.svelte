@@ -1,22 +1,45 @@
 <script lang="ts">
 	import { base } from '$app/paths';
-	import type { CategoryData, Sprite } from '$lib/types';
+	import type { CategoryData, ModEntry, Sprite } from '$lib/types';
 	import CategoryCard from './CategoryCard.svelte';
+	import ModCard from './ModCard.svelte';
 
 	interface Props {
 		categories: Record<string, CategoryData>;
+		mods: ModEntry[];
 		sprites: Sprite[];
 		searchQuery: string;
 		onSearch: (query: string) => void;
 		onCategorySelect: (category: string) => void;
+		onModSelect: (slug: string) => void;
 	}
 
-	let { categories, sprites, searchQuery, onSearch, onCategorySelect }: Props = $props();
+	let { categories, mods, sprites, searchQuery, onSearch, onCategorySelect, onModSelect }: Props = $props();
 
 	let categoryRepresentatives = $derived.by(() => {
 		const reps: Record<string, Sprite | undefined> = {};
 		for (const category of Object.keys(categories)) {
-			reps[category] = sprites.find((s) => s.category === category);
+			reps[category] = sprites.find((s) => s.category === category && !s.modSlug);
+		}
+		return reps;
+	});
+
+	let modRepresentatives = $derived.by(() => {
+		// Prefer the largest sprite per mod so mod cards display a visually
+		// substantive thumbnail (a 3D unit render rather than a 63px icon).
+		const reps: Record<string, Sprite | undefined> = {};
+		for (const mod of mods) {
+			let best: Sprite | undefined;
+			let bestArea = 0;
+			for (const s of sprites) {
+				if (s.modSlug !== mod.slug) continue;
+				const area = s.width * s.height;
+				if (area > bestArea) {
+					best = s;
+					bestArea = area;
+				}
+			}
+			reps[mod.slug] = best;
 		}
 		return reps;
 	});
@@ -101,6 +124,31 @@
 		</div>
 	</div>
 </section>
+
+{#if mods.length > 0}
+	<!-- Mods Section -->
+	<section style="background-color: var(--color-surface); margin-top: 16px; width: 90%; margin-left: auto; margin-right: auto;">
+		<div style="padding: 2rem 3rem 1rem 3rem;">
+			<h2 style="font-size: 1.5rem; font-weight: 600; color: var(--color-foreground); margin: 0;">
+				Mods
+			</h2>
+			<p style="font-size: 0.875rem; color: var(--color-muted); margin: 0.25rem 0 0 0;">
+				Community-created art for Old World. Attribution sits next to each entry.
+			</p>
+		</div>
+		<div style="padding: 0 3rem 3rem 3rem;">
+			<div class="category-grid">
+				{#each mods as mod (mod.slug)}
+					<ModCard
+						{mod}
+						representativeSprite={modRepresentatives[mod.slug]}
+						onclick={() => onModSelect(mod.slug)}
+					/>
+				{/each}
+			</div>
+		</div>
+	</section>
+{/if}
 
 <style lang="postcss">
 	@reference "tailwindcss";
