@@ -566,31 +566,44 @@ def _extract_2d_bundle(
 _DEFAULT_FRONT_DEG: float = 180.0
 _DEFAULT_BACK_DEG: float = 0.0
 
-# Prefab GameObject names whose authored facing is +Z (the reverse of
-# the base-game convention). For these, ``_FRONT.png`` must be rendered
-# at 0° and ``_BACK.png`` at 180° so the gallery's FRONT/BACK suffixes
-# correspond to the soldier's actual front/back. List captured by
-# eyeballing the renders — Shirotora Kenshin's Nation Specific Graphics -
-# Units mod authored its swordsmen inconsistently across nations.
-_BACK_AUTHORED_PREFABS: frozenset[str] = frozenset(
-    {
-        "Assyria_Elite_Swordsman",
-        "Babylonia_Elite_Swordsman",
-        "Carthage_Elite_Swordsman",
-        "Egypt_Elite_Swordsman",
-        "Persia_Elite_Swordsman",
-        "Rome_Elite_Swordsman",
-    }
-)
+# Per-mod sets of prefab GameObject names whose authored facing is +Z
+# (the reverse of the base-game -Z convention). For these, ``_FRONT.png``
+# is rendered at 0° and ``_BACK.png`` at 180° so the suffix reflects the
+# soldier's actual front/back, not the rotation amount. Keyed by mod slug
+# because the same GameObject name recurs across mods with different
+# authored facings — e.g. ``Babylonia_Elite_Swordsman`` is +Z in
+# NSG-Units but -Z in Graphics for Dynamic Unit. Captured by eyeballing
+# the renders.
+_BACK_AUTHORED_PREFABS: dict[str, frozenset[str]] = {
+    "nation-specific-graphics-units": frozenset(
+        {
+            "Assyria_Elite_Swordsman",
+            "Babylonia_Elite_Swordsman",
+            "Carthage_Elite_Swordsman",
+            "Egypt_Elite_Swordsman",
+            "Persia_Elite_Swordsman",
+            "Rome_Elite_Swordsman",
+        }
+    ),
+    "graphics-for-dynamic-unit": frozenset(
+        {
+            # Camel_Lancer and Babylonia_Sabum_Kibittum (the "Royal" unit)
+            # are authored +Z; Babylonia_Elite_Swordsman (Recruiter) and
+            # Hittites_Elite_Swordsman (Heavy Footman) are -Z (default).
+            "Camel_Lancer",
+            "Babylonia_Sabum_Kibittum",
+        }
+    ),
+}
 
 
-def _views_for_prefab(prefab_name: str) -> tuple[tuple[str, float], ...]:
+def _views_for_prefab(mod_slug: str, prefab_name: str) -> tuple[tuple[str, float], ...]:
     """Return the (suffix, degrees) views to render for one prefab.
-    Flips the default FRONT/BACK rotation mapping for prefabs the mod
-    author authored facing +Z so the suffix always reflects the
-    soldier's actual front/back, not the rotation amount.
+    FRONT/BACK is the default pair, with the rotation→suffix mapping
+    flipped for prefabs the mod author authored facing +Z so the suffix
+    reflects the unit's actual front/back, not the rotation amount.
     """
-    if prefab_name in _BACK_AUTHORED_PREFABS:
+    if prefab_name in _BACK_AUTHORED_PREFABS.get(mod_slug, frozenset()):
         return (("_FRONT", _DEFAULT_BACK_DEG), ("_BACK", _DEFAULT_FRONT_DEG))
     return (("_FRONT", _DEFAULT_FRONT_DEG), ("_BACK", _DEFAULT_BACK_DEG))
 
@@ -683,7 +696,7 @@ def _extract_3d_jobs(
         out_dir.mkdir(parents=True, exist_ok=True)
         view_targets = [
             (suffix, deg, out_dir / f"{job.output_basename}{suffix}.png")
-            for suffix, deg in _views_for_prefab(job.prefab_name)
+            for suffix, deg in _views_for_prefab(mod_root.name, job.prefab_name)
         ]
         if all(p.exists() for _, _, p in view_targets):
             if verbose:
@@ -772,7 +785,7 @@ def _extract_fallback_3d(
             continue
         view_targets = [
             (suffix, deg, out_dir / f"{output_basename}{suffix}.png")
-            for suffix, deg in _views_for_prefab(name)
+            for suffix, deg in _views_for_prefab(mod_root.name, name)
         ]
         if all(p.exists() for _, _, p in view_targets):
             seen_outputs.add(output_basename)
