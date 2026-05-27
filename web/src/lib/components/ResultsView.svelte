@@ -144,13 +144,22 @@
 {#if activeMod}
 	<!-- Mod attribution byline - subtle, focus stays on the art -->
 	<section style="margin-top: 12px; width: 90%; margin-left: auto; margin-right: auto;">
-		<div style="max-width: 800px; margin: 0 auto; padding: 0 1.5rem; display: flex; align-items: baseline; gap: 0.5rem; color: var(--color-muted); font-size: 0.8125rem;">
-			<span style="font-style: italic;">
-				by {activeMod.author || 'unknown'}
-			</span>
-			{#if activeMod.version}
-				<span>&middot;</span>
-				<span>v{activeMod.version}</span>
+		<div style="width: fit-content; margin: 0 auto; padding: 0 1.5rem;">
+			<div style="display: flex; align-items: baseline; gap: 0.5rem; color: var(--color-muted); font-size: 0.8125rem;">
+				<span style="font-style: italic;">
+					by {activeMod.credit && activeMod.credit.length
+						? activeMod.credit.join(' & ')
+						: activeMod.author || 'unknown'}
+				</span>
+				{#if activeMod.version}
+					<span>&middot;</span>
+					<span>v{activeMod.version}</span>
+				{/if}
+			</div>
+			{#if activeMod.disclaimer}
+				<div style="margin: 0.25rem 0 0; color: var(--color-muted); font-size: 0.8125rem; font-style: italic; text-align: left; white-space: nowrap;">
+					{activeMod.disclaimer}
+				</div>
 			{/if}
 		</div>
 	</section>

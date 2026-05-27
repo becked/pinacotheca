@@ -348,9 +348,11 @@
 					</p>
 				{/if}
 				<p class="mt-1 text-sm text-muted">
-					{categoryInfo.icon}
-					{categoryInfo.displayName}
-					&bull;
+					{#if !lightboxSprite.modSlug}
+						{categoryInfo.icon}
+						{categoryInfo.displayName}
+						&bull;
+					{/if}
 					{lightboxSprite.width} &times; {lightboxSprite.height}px
 					{#if lightboxSprite.size}
 						&bull;

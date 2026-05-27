@@ -30,9 +30,9 @@
 	<span class="font-medium text-foreground group-hover:text-primary">
 		{mod.displayName}
 	</span>
-	{#if mod.author}
+	{#if (mod.credit && mod.credit.length) || mod.author}
 		<span class="text-xs text-muted/80" style="font-style: italic;">
-			by {mod.author}
+			by {mod.credit && mod.credit.length ? mod.credit.join(' & ') : mod.author}
 		</span>
 	{/if}
 	<span class="text-sm text-muted">

@@ -22,6 +22,8 @@ export interface ModEntry {
 	author: string;
 	version: string;
 	description: string;
+	disclaimer?: string;
+	credit?: string[];
 	count: number;
 }
 

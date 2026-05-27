@@ -78,11 +78,37 @@ _MOD_ATTRIBUTION: dict[str, dict[str, Any]] = {
         # "thanks to And" for icons, per the mod description.
         "default": ["Harry", "And"],
     },
+    # And's mods. Their ModInfo author is "arb1" (or blank for Improvement
+    # Images), but "arb1" is And's mod handle — confirmed by the user — so
+    # we credit him as "And" to match how he's credited elsewhere and how
+    # his Discord approval was given.
+    "improvement-images": {
+        "default": ["And"],
+    },
+    "character-portraits": {
+        "default": ["And"],
+    },
+    "the-eye-of-atum": {
+        "default": ["And"],
+    },
+    # Harry's mods. Harry approved "all images" on the condition that And
+    # be credited too, so every Harry mod is attributed [Harry, And].
+    "dynamic-battlefield": {
+        "default": ["Harry", "And"],
+    },
+    "dynamic-world": {
+        "default": ["Harry", "And"],
+    },
+    "graphics-for-dynamic-unit": {
+        "default": ["Harry", "And"],
+    },
     "nation-specific-graphics-units": {
-        # Per the description's Credits block: "And (Research), Harry (C# DLL
-        # Modding), Shirotora Kenshin (3D Artwork, XML)". Mohawk Games is
-        # credited too but it's the game studio, not a contributor.
-        "default": ["Shirotora Kenshin", "And", "Harry"],
+        # The mod's Credits block names three contributors — And (Research),
+        # Harry (C# DLL Modding), Shirotora Kenshin (3D Artwork, XML) — but
+        # only Shirotora authored the visible 3D unit art these renders show,
+        # so he's the sole displayed credit. All three approved publication
+        # (see APPROVED_AUTHORS_BY_MOD); their approvals are recorded there.
+        "default": ["Shirotora Kenshin"],
     },
     "the-greek-dynasties": {
         # Maniac is the mod author; the 3D unit meshes are NSG's
@@ -95,6 +121,18 @@ _MOD_ATTRIBUTION: dict[str, dict[str, Any]] = {
             {"pattern": r"^RESOURCE_", "authors": ["Maniac", "Revan"]},
         ],
     },
+}
+
+
+# Per-mod disclaimer text surfaced in the gallery byline when a mod is
+# selected. Authored as a condition of an artist's publication approval
+# (Shirotora Kenshin asked that NSG-Units renders note they aren't meant
+# to be viewed up close — they were textured to read at in-game distance).
+_MOD_DISCLAIMERS: dict[str, str] = {
+    "nation-specific-graphics-units": (
+        "These unit renders are shown at close range; the mod's textures "
+        "were authored to read at in-game distance, not for close-up viewing."
+    ),
 }
 
 
@@ -139,6 +177,35 @@ APPROVED_AUTHORS_BY_MOD: dict[str, frozenset[str]] = {
             "And",
         }
     ),
+    # All three NSG-Units credited authors approved via Discord:
+    #   - Shirotora Kenshin (3D Artwork): cleared his unit renders, with
+    #     the condition the gallery note they're not meant to look perfect
+    #     at close distance (surfaced as a disclaimer on the site).
+    #   - Harry: "Sure thing!" for all his images, condition that And be
+    #     credited (handled via _MOD_ATTRIBUTION's default list).
+    #   - And: gave general permission to use his mod art; we read that as
+    #     covering his Research contribution to this mod. Credit required.
+    # Approval is scoped to this mod only.
+    "nation-specific-graphics-units": frozenset(
+        {
+            "Shirotora Kenshin",
+            "And",
+            "Harry",
+        }
+    ),
+    # And (mod handle "arb1") approved his own mods via Discord:
+    # "You can certainly use the Improvement Images and Character Portrait
+    # mod" and later "you can add the Eye of Atum too". Credit required.
+    "improvement-images": frozenset({"And"}),
+    "character-portraits": frozenset({"And"}),
+    "the-eye-of-atum": frozenset({"And"}),
+    # Harry approved all his images ("Sure thing!") on the condition that
+    # And be credited too. And's general permission to use his mod art is
+    # read as covering his co-credit here (same call as NSG-Units). Both
+    # must stay in the approved set for the all-authors rule to pass.
+    "dynamic-battlefield": frozenset({"Harry", "And"}),
+    "dynamic-world": frozenset({"Harry", "And"}),
+    "graphics-for-dynamic-unit": frozenset({"Harry", "And"}),
 }
 
 
@@ -168,12 +235,18 @@ def compute_excluded_mod_globs(output_dir: Path) -> list[str]:
     ``extracted/sprites/``) for sprites that are NOT cleared by
     :data:`APPROVED_AUTHORS_BY_MOD`.
 
-    A sprite is filtered when any of:
+    A sprite is filtered when either of:
       - Its mod slug has no entry in :data:`APPROVED_AUTHORS_BY_MOD`
         (new mods are filtered by default — no approval).
-      - It has no resolved authors (no one to ask for approval).
-      - At least one of its authors is missing from that mod's
-        approved set.
+      - At least one of its resolved authors is missing from that
+        mod's approved set.
+
+    An explicit approval entry is the authorization signal: a sprite
+    in an approved mod ships even when we can't resolve a credited
+    author from its ModInfo/attribution (the empty author set is a
+    subset of any approved set). The per-sprite subset check still
+    holds the line — e.g. a ``RESOURCE_*`` sprite credited
+    ``[Maniac, Revan]`` stays filtered unless both are approved.
 
     Emits one literal-path glob per matching ``.png`` plus a parallel
     glob for the ``.json`` render-metadata sidecar that lives next to
@@ -205,10 +278,11 @@ def compute_excluded_mod_globs(output_dir: Path) -> list[str]:
                 continue
             for png_path in sorted(sub_dir.glob("*.png")):
                 authors = _resolve_authors_for_sprite(png_path.stem, attribution, fallback)
-                # Ship only when this mod has an approval entry, we
-                # have at least one credited author, and every author
-                # is in the mod's approved set.
-                if approved is not None and authors and set(authors).issubset(approved):
+                # Ship when this mod has an approval entry and every
+                # resolved author (if any) is in the mod's approved set.
+                # No resolved author + an approval entry still ships —
+                # the explicit approval is the signal.
+                if approved is not None and set(authors).issubset(approved):
                     continue
                 rel = f"mods/{mod_dir.name}/{sub_dir.name}/{png_path.name}"
                 globs.add(rel)
@@ -339,12 +413,23 @@ def _build_render_jobs(mod_dir: Path, bundle_names: set[str]) -> list[ModRenderJ
 
 def _write_mod_sidecar(mod_root: Path, mod: Any) -> None:
     """Write the per-mod ``mod.json`` describing display name, author,
-    version, description, attribution table, and the extraction
-    timestamp. The web manifest builder reads this to surface subtle
-    attribution next to each mod's sprite grid AND on individual
-    sprites (search results / lightbox).
+    version, description, attribution table, the mod-level display
+    ``credit``, and the extraction timestamp. The web manifest builder
+    reads this to surface subtle attribution next to each mod's sprite
+    grid AND on individual sprites (search results / lightbox).
     """
     attribution = _resolved_attribution(mod.slug, mod.author)
+    # Mod-level display credit shown in the gallery byline / mod card.
+    # Prefer the resolved attribution default; when that's empty (the
+    # ModInfo author was blank and there's no attribution override),
+    # fall back to the mod's approved-author set so an explicitly
+    # approved mod (e.g. Byzantine Empire → Dale Kent) still credits a
+    # real name instead of "unknown".
+    credit = list(attribution.get("default") or [])
+    if not credit:
+        approved = APPROVED_AUTHORS_BY_MOD.get(mod.slug)
+        if approved:
+            credit = sorted(approved)
     payload = {
         "slug": mod.slug,
         "displayName": mod.display_name,
@@ -352,8 +437,12 @@ def _write_mod_sidecar(mod_root: Path, mod: Any) -> None:
         "version": mod.version,
         "description": mod.description,
         "attribution": attribution,
+        "credit": credit,
         "extractedAt": datetime.now(UTC).isoformat(),
     }
+    disclaimer = _MOD_DISCLAIMERS.get(mod.slug)
+    if disclaimer:
+        payload["disclaimer"] = disclaimer
     mod_root.mkdir(parents=True, exist_ok=True)
     sidecar = mod_root / "mod.json"
     sidecar.write_text(json.dumps(payload, indent=2) + "\n")

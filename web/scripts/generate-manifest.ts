@@ -118,6 +118,8 @@ interface ModEntry {
 	author: string;
 	version: string;
 	description: string;
+	disclaimer?: string;
+	credit?: string[];
 	count: number;
 }
 
@@ -197,6 +199,8 @@ interface ModSidecar {
 	author: string;
 	version: string;
 	description: string;
+	disclaimer?: string;
+	credit?: string[];
 	attribution?: AttributionTable;
 }
 
@@ -302,7 +306,9 @@ async function scanMods(
 				author: sidecar.author,
 				version: sidecar.version,
 				description: sidecar.description,
-				count
+				count,
+				...(sidecar.disclaimer ? { disclaimer: sidecar.disclaimer } : {}),
+				...(sidecar.credit && sidecar.credit.length ? { credit: sidecar.credit } : {})
 			});
 		}
 	}
