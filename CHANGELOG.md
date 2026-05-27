@@ -2,6 +2,45 @@
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-05-26
+
+### Added
+- Publication approvals for seven more mods, gated per-mod by
+  `APPROVED_AUTHORS_BY_MOD`: Nation Specific Graphics – Units
+  (Shirotora Kenshin), And's Improvement Images / Character Portraits /
+  The Eye of Atum, and Harry's Dynamic battlefield / Dynamic World /
+  Graphics for Dynamic Unit. Each shipped only after explicit per-mod
+  approval from every credited author; approvals are recorded inline.
+- Per-mod disclaimer support. New `_MOD_DISCLAIMERS` table writes an
+  optional `disclaimer` into `mod.json`, threaded through the manifest
+  to a byline note in the gallery. Nation Specific Graphics – Units
+  carries the close-distance-rendering note its artist requested as a
+  condition of approval.
+- Mod-level `credit` field in `mod.json`. Resolved from the attribution
+  table, falling back to the mod's approved-author set, so the gallery
+  byline and mod cards show real names (e.g. "And" rather than the
+  ModInfo handle "arb1", "Dale Kent" for an author-less ModInfo) instead
+  of "unknown".
+- `arb1` → "And" attribution mapping for And's mods, and an `And`
+  co-credit on Harry's mods per his approval condition.
+
+### Changed
+- The gallery filter now ships an explicitly-approved mod even when its
+  ModInfo author is empty — the approval entry is the authorization
+  signal. The per-sprite author-subset check is unchanged, so mixed-
+  authorship cases (e.g. Greek Dynasties' Revan-credited resource icons)
+  stay gated.
+- Nation Specific Graphics – Units renders credit only Shirotora Kenshin
+  (the 3D artist) rather than all three documented contributors.
+- Gallery lightbox omits the redundant `mod:<slug>` line for mod sprites
+  (the mod name already shows in the attribution line); mod byline and
+  disclaimer share a centered, left-aligned block.
+
+### Fixed
+- Byzantine Empire dropped out of the gallery after a mod update cleared
+  its ModInfo `<author/>` field; an approved mod with no resolvable
+  author is now published and credited from its approval entry.
+
 ## [2.5.0] - 2026-05-19
 
 ### Added
