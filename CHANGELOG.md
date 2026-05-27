@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [2.6.1] - 2026-05-26
+
+### Fixed
+- FRONT/BACK labels were swapped on several Graphics for Dynamic Unit
+  renders (Camel Lancer, Royal, Recruiter). `_BACK_AUTHORED_PREFABS` is
+  now keyed by mod slug rather than a single global set: the same
+  GameObject name (`Babylonia_Elite_Swordsman`) recurs across mods with
+  opposite authored facings, so the global set cross-contaminated them —
+  flipping the Recruiter in this mod while leaving Camel Lancer and Royal
+  at the default. Camel Lancer and Royal now flip; Recruiter and Heavy
+  Footman use the default. NSG-Units' set is unchanged.
+
 ## [2.6.0] - 2026-05-26
 
 ### Added
