@@ -1,0 +1,19 @@
+{
+  "slug": "dynamic-battlefield",
+  "displayName": "Dynamic battlefield",
+  "author": "Harry",
+  "version": "3.15",
+  "description": "Strategic war mod focus on unique movement patterns, morale, and role-based combat.\nCompanion Mod: Dynamic World, Dynamic Units, Middle Kingdom Map.\n\nA self-contained mod balanced for both base game and Dynamic World/Dynamic Unit. Compatibility with other mods are expected too. The mod adds many interesting battle dynamics that create more tactical depth, more fluid battle lines for a fun war experience. \n\nKey features:\nSkirmishing: new unit mechanic where skirmisher units will retreat when attacked.\nFriendly fire: AoE damage (e.g. Pierce, Splash) will now affect all units caught in the crossfire, including friendly and neutral ones\nHit-and-run: select ranged units can \"Kite\", that is move after attacking\nCharge: select mounted melee units can now charge and scatter the target, pushing their way into a hostile tile\nSignificant AI, UI updates to handle the new features\n\nGraphics provided by AND. Thanks for playing my mod, you can find me on the Old World Discord as ```Harry!```.",
+  "attribution": {
+    "default": [
+      "Harry",
+      "And"
+    ],
+    "overrides": []
+  },
+  "credit": [
+    "Harry",
+    "And"
+  ],
+  "extractedAt": "2026-05-27T03:19:59.086592+00:00"
+}

@@ -1,0 +1,17 @@
+{
+  "slug": "improvement-images",
+  "displayName": "Improvement Images",
+  "author": "",
+  "version": "5.3",
+  "description": "Replaces the improvement icons (like the mine, pasture, library and so on). In game icons are also replaced.",
+  "attribution": {
+    "default": [
+      "And"
+    ],
+    "overrides": []
+  },
+  "credit": [
+    "And"
+  ],
+  "extractedAt": "2026-05-27T03:20:03.893286+00:00"
+}

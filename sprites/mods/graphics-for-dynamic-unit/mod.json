@@ -1,0 +1,19 @@
+{
+  "slug": "graphics-for-dynamic-unit",
+  "displayName": "Graphics for Dynamic Unit",
+  "author": "Harry",
+  "version": "1.7",
+  "description": "Adds three unique 3D models (thanks to Shirotora Kenshin) for Dynamic Units(DU), so to make DU's new units more visually distinct from vanilla units\n\nSelect Changelog:\n1.5: Added custom Camel lancer 3D graphic",
+  "attribution": {
+    "default": [
+      "Harry",
+      "And"
+    ],
+    "overrides": []
+  },
+  "credit": [
+    "Harry",
+    "And"
+  ],
+  "extractedAt": "2026-05-27T03:20:00.348272+00:00"
+}

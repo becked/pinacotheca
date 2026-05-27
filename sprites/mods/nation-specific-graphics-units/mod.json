@@ -6,11 +6,13 @@
   "description": "This mod adds unique models to the Swordsman unit, for all 10 nations. The other units will hopefully get the same attention with time. \n\nCredits: \nAnd (Research),\nMohawk Games (for their fantastic 'Old World' Game),\nHarry (C# DLL Modding),\nShirotora Kenshin (3D Artwork, XML).",
   "attribution": {
     "default": [
-      "Shirotora Kenshin",
-      "And",
-      "Harry"
+      "Shirotora Kenshin"
     ],
     "overrides": []
   },
-  "extractedAt": "2026-05-19T21:35:33.282079+00:00"
+  "credit": [
+    "Shirotora Kenshin"
+  ],
+  "extractedAt": "2026-05-27T03:20:04.958547+00:00",
+  "disclaimer": "These unit renders are shown at close range; the mod's textures were authored to read at in-game distance, not for close-up viewing."
 }

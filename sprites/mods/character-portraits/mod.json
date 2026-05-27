@@ -1,0 +1,17 @@
+{
+  "slug": "character-portraits",
+  "displayName": "Character Portraits",
+  "author": "arb1",
+  "version": "4.6",
+  "description": "Character Portraits - Replacement portraits for the historical characters. Some of these characters you will encounter quite easily; others are very rare... \n\nPlus a selection of eight male and eight female character portraits for selecting via the character creation panel on game start. They will only be seen in the character creation panel. These are unique portraits for this mod and will not appear elsewhere. \n\nCharacter Interpolation should be turned off to use this mod.",
+  "attribution": {
+    "default": [
+      "And"
+    ],
+    "overrides": []
+  },
+  "credit": [
+    "And"
+  ],
+  "extractedAt": "2026-05-27T03:19:58.392136+00:00"
+}

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "composition": "prefab",
+  "world": {
+    "maxExtent": 5.71104157,
+    "bboxMin": [
+      -1.76557792,
+      0.00142497144,
+      -1.85832638
+    ],
+    "bboxMax": [
+      3.9454636499999998,
+      5.45551656,
+      0.7568640720000002
+    ],
+    "groundHex": null
+  },
+  "framing": {
+    "projection": "perspective",
+    "tiltDeg": null,
+    "distance": 8.566562355,
+    "frustumHalfSize": null,
+    "fovDeg": 60.0
+  },
+  "render": {
+    "preCropWidthPx": 2048,
+    "preCropHeightPx": 2048,
+    "outputWidthPx": 1314,
+    "outputHeightPx": 1295,
+    "worldUnitsPerOutputPixel": 0.004829987384461878
+  }
+}

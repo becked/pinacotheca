@@ -1,0 +1,17 @@
+{
+  "slug": "assetbuildertestmod",
+  "displayName": "AssetBuilderTestMod",
+  "author": "jeff",
+  "version": "0.1.0",
+  "description": "A brief description of your mod.",
+  "attribution": {
+    "default": [
+      "jeff"
+    ],
+    "overrides": []
+  },
+  "credit": [
+    "jeff"
+  ],
+  "extractedAt": "2026-05-27T03:19:57.308795+00:00"
+}
