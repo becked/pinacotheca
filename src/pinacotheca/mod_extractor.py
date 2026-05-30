@@ -45,6 +45,17 @@ When an author grants approval for a specific mod, add a (slug, names)
 entry to ``APPROVED_AUTHORS_BY_MOD`` and rerun ``pinacotheca-mods``;
 the gallery filter sidecar gets rewritten automatically and the
 gallery's Mods section updates on the next manifest build.
+
+Excluding leaked / pre-release assets
+-------------------------------------
+Mod extraction honours the same gitignored ``.exclude-patterns`` file as
+base-game extraction (see :func:`pinacotheca.extractor.load_exclusion_pattern`).
+Any sprite or 3D render whose name matches a pattern is skipped entirely —
+the file is never written to disk. This is the right tool for content that
+must not leak (e.g. a mod author shipping placeholder art for unreleased
+DLC): unlike the publication allowlist, which renders locally and only
+withholds from the deploy, an excluded asset is never extracted at all, and
+the patterns live only in the local file so naming them leaks nothing.
 """
 
 from __future__ import annotations
@@ -453,6 +464,7 @@ def _extract_2d_bundle(
     out_dir: Path,
     *,
     verbose: bool,
+    exclude_pattern: re.Pattern[str] | None = None,
 ) -> int:
     """Save every readable image from a 2D mod bundle as a PNG into
     ``out_dir``. Returns the count saved.
@@ -506,6 +518,10 @@ def _extract_2d_bundle(
             name = getattr(data, "m_Name", "")
             if not name:
                 continue
+            if exclude_pattern and exclude_pattern.search(name):
+                if verbose:
+                    print(f"  [EXCLUDED] {name}")
+                continue
             out_path = out_dir / f"{name}.png"
             if out_path.exists():
                 consumed_textures.add(name)
@@ -540,6 +556,10 @@ def _extract_2d_bundle(
     # Sprite, but some sprite metadata is incomplete in mod toolchains).
     for tex_name, tex in textures_by_name.items():
         if tex_name in consumed_textures:
+            continue
+        if exclude_pattern and exclude_pattern.search(tex_name):
+            if verbose:
+                print(f"  [EXCLUDED] {tex_name}")
             continue
         out_path = out_dir / f"{tex_name}.png"
         if out_path.exists():
@@ -666,6 +686,7 @@ def _extract_3d_jobs(
     jobs: list[ModRenderJob],
     *,
     verbose: bool,
+    exclude_pattern: re.Pattern[str] | None = None,
 ) -> tuple[int, int]:
     """Render the 3D jobs whose prefabs live in this bundle. Returns
     ``(rendered, skipped)`` — counts are per (prefab, view) pair, so a
@@ -692,6 +713,10 @@ def _extract_3d_jobs(
     rendered = 0
     skipped = 0
     for job in jobs:
+        if exclude_pattern and exclude_pattern.search(job.output_basename):
+            if verbose:
+                print(f"  [EXCLUDED] {job.output_basename}")
+            continue
         out_dir = mod_root / job.category
         out_dir.mkdir(parents=True, exist_ok=True)
         view_targets = [
@@ -741,6 +766,7 @@ def _extract_fallback_3d(
     mod_root: Path,
     *,
     verbose: bool,
+    exclude_pattern: re.Pattern[str] | None = None,
 ) -> tuple[int, int]:
     """Render every parent-less prefab in a 3D bundle when the mod ships
     no asset XML to identify which GameObjects are renderable roots.
@@ -782,6 +808,10 @@ def _extract_fallback_3d(
             continue  # leaf mesh GameObject under a prefab root; the root carries it
         output_basename = f"UNIT_3D_{_to_screaming_snake(name)}"
         if output_basename in seen_outputs:
+            continue
+        if exclude_pattern and exclude_pattern.search(output_basename):
+            if verbose:
+                print(f"  [EXCLUDED] {output_basename}")
             continue
         view_targets = [
             (suffix, deg, out_dir / f"{output_basename}{suffix}.png")
@@ -852,10 +882,17 @@ def extract_mod_assets(
         Per-mod result dict: ``{slug: {"rendered": N, "skipped": N,
         "sprites": N}}``. Empty when no mods directory was found.
     """
+    from pinacotheca.extractor import load_exclusion_pattern
     from pinacotheca.mod_scanner import discover_mods
 
     if output_dir is None:
         output_dir = Path.cwd() / "extracted"
+
+    # Honour the gitignored .exclude-patterns file the same way base-game
+    # extraction does — skip any sprite/render whose name matches, so
+    # pre-release / leaked assets are never written to disk. Patterns stay
+    # local (never committed), so naming them here leaks nothing.
+    exclude_pattern = load_exclusion_pattern()
 
     mods_root = output_dir / "sprites" / "mods"
     mods = discover_mods(mods_dir)
@@ -869,6 +906,8 @@ def extract_mod_assets(
             print("No mods with extractable content found.")
             return {}
         print(f"Discovered {len(mods)} extractable mod(s)")
+        if exclude_pattern is not None:
+            print("Exclusion patterns loaded from .exclude-patterns")
 
     results: dict[str, dict[str, int]] = {}
     for mod in mods:
@@ -890,7 +929,13 @@ def extract_mod_assets(
                     continue
                 if verbose:
                     print(f"  Rendering 3D bundle '{bundle.name}' (Unity {bundle.unity_version})")
-                r, s = _extract_3d_jobs(bundle.path, mod_root, bundle_jobs, verbose=verbose)
+                r, s = _extract_3d_jobs(
+                    bundle.path,
+                    mod_root,
+                    bundle_jobs,
+                    verbose=verbose,
+                    exclude_pattern=exclude_pattern,
+                )
                 result["rendered"] += r
                 result["skipped"] += s
         elif threed_bundles:
@@ -898,7 +943,12 @@ def extract_mod_assets(
             for bundle in threed_bundles:
                 if verbose:
                     print(f"  Rendering 3D bundle '{bundle.name}' (fallback discovery)")
-                r, s = _extract_fallback_3d(bundle.path, mod_root, verbose=verbose)
+                r, s = _extract_fallback_3d(
+                    bundle.path,
+                    mod_root,
+                    verbose=verbose,
+                    exclude_pattern=exclude_pattern,
+                )
                 result["rendered"] += r
                 result["skipped"] += s
 
@@ -906,7 +956,12 @@ def extract_mod_assets(
             sprites_out = mod_root / "sprites"
             if verbose:
                 print(f"  Extracting 2D bundle '{bundle.name}'")
-            n = _extract_2d_bundle(bundle.path, sprites_out, verbose=verbose)
+            n = _extract_2d_bundle(
+                bundle.path,
+                sprites_out,
+                verbose=verbose,
+                exclude_pattern=exclude_pattern,
+            )
             result["sprites"] += n
 
         results[mod.slug] = result
