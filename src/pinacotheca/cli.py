@@ -5,6 +5,7 @@ Provides commands for extracting sprites, generating galleries, and deploying to
 """
 
 import argparse
+import concurrent.futures
 import json
 import os
 import shutil
@@ -211,29 +212,53 @@ def _stage_with_filter(
     subprocess.run(cmd, check=True)
 
 
-def _run_oxipng(directory: Path, *, verbose: bool = True) -> tuple[int, int]:
-    """Optimize PNGs under ``directory`` in place. Returns (before, after) bytes."""
+# WebP quality for the deployed gallery. q90 is visually lossless on these
+# renders (PSNR 40-44 dB, SSIM > 0.999) at ~22% of the oxipng'd PNG size —
+# benchmarked across improvements, units, portraits, backgrounds, and 2D icons.
+# `-alpha_q 100` keeps the alpha channel crisp (these are cutout sprites on
+# transparent backgrounds). Keep in sync with `web/src/lib/utils/spriteUrl.ts`.
+_WEBP_QUALITY = "90"
+_WEBP_ALPHA_QUALITY = "100"
+
+
+def _convert_to_webp(directory: Path, *, verbose: bool = True) -> tuple[int, int]:
+    """Convert every ``*.png`` under ``directory`` to a sibling ``*.webp`` and
+    delete the source PNG. Runs ``cwebp`` in parallel. Returns (before, after)
+    bytes measured across ``directory``.
+
+    This is load-bearing, not an optimization: the deployed SvelteKit gallery
+    references ``.webp`` (see ``web/src/lib/utils/spriteUrl.ts``), so the staged
+    tree must be WebP. Callers must verify ``cwebp`` is present first.
+    """
     before = _dir_size_bytes(directory)
-    threads = str(os.cpu_count() or 4)
-    # -o 2 (default) gives ~95% of -o 4's savings at <30% the wall time;
-    # benchmarked on these renders, -o 4 saves only 0.3 percentage points
-    # extra at 3x the runtime. Not worth it on a 4500-file deploy.
-    cmd = [
-        "oxipng",
-        "-o",
-        "2",
-        "--strip",
-        "safe",
-        "-t",
-        threads,
-        "-r",
-        "--preserve",
-        "-q",
-        str(directory),
-    ]
+    pngs = sorted(directory.rglob("*.png"))
     if verbose:
-        print(f"Running oxipng -o 2 on {directory} (-t {threads})...")
-    subprocess.run(cmd, check=True)
+        print(f"Converting {len(pngs):,} PNG(s) to WebP q{_WEBP_QUALITY} in {directory}...")
+
+    def convert(png: Path) -> None:
+        webp = png.with_suffix(".webp")
+        subprocess.run(
+            [
+                "cwebp",
+                "-quiet",
+                "-q",
+                _WEBP_QUALITY,
+                "-alpha_q",
+                _WEBP_ALPHA_QUALITY,
+                str(png),
+                "-o",
+                str(webp),
+            ],
+            check=True,
+        )
+        png.unlink()
+
+    workers = os.cpu_count() or 4
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+        # Surface the first encode failure by consuming results.
+        for _ in pool.map(convert, pngs):
+            pass
+
     after = _dir_size_bytes(directory)
     return before, after
 
@@ -242,23 +267,30 @@ def deploy() -> None:
     """Deploy gallery to GitHub Pages using ghp-import.
 
     Stages ``--output`` to a temp directory via ``rsync``, applying the gallery
-    filter (see ``src/pinacotheca/gallery_filter.py``) and optionally running
-    ``oxipng`` for additional compression, before handing the staged tree to
-    ``ghp-import``. Local ``extracted/`` is never modified.
+    filter (see ``src/pinacotheca/gallery_filter.py``), converting the staged
+    PNGs to WebP q90 (the deployed gallery references ``.webp`` — see
+    ``web/src/lib/utils/spriteUrl.ts``), before handing the staged tree to
+    ``ghp-import``. Local ``extracted/`` is never modified (it stays PNG for
+    per-ankh and the dev server).
+
+    NOTE: the *built* output (``pinacotheca-web-build`` → ``extracted/``)
+    references ``.webp`` but the local sprite tree is still ``.png``, so opening
+    the built ``extracted/index.html`` directly shows broken images. Preview with
+    the dev server (``pinacotheca-web``, serves PNG); the deployed site is correct
+    because this command converts the staged copy.
     """
     parser = argparse.ArgumentParser(
         description="Deploy gallery to GitHub Pages",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 This command stages ./extracted to a temp directory (filtering large local-only
-assets — see src/pinacotheca/gallery_filter.py), optionally compresses PNGs with
-oxipng, then uses ghp-import to push the staged tree to the gh-pages branch.
+assets — see src/pinacotheca/gallery_filter.py), converts the staged PNGs to
+WebP q90, then uses ghp-import to push the staged tree to the gh-pages branch.
 
 Examples:
-  pinacotheca-deploy                    # Filter + oxipng + push
-  pinacotheca-deploy --no-optimize      # Skip oxipng pass
+  pinacotheca-deploy                    # Filter + WebP + push
   pinacotheca-deploy --no-filter        # Emergency: deploy everything (over Pages cap!)
-  pinacotheca-deploy --dry-run          # Stage and report; don't push
+  pinacotheca-deploy --dry-run          # Stage, convert, and report; don't push
         """,
     )
     parser.add_argument(
@@ -288,11 +320,6 @@ Examples:
         "--branch",
         default="gh-pages",
         help="Branch to deploy to (default: gh-pages)",
-    )
-    parser.add_argument(
-        "--no-optimize",
-        action="store_true",
-        help="Skip the oxipng compression pass on staged PNGs",
     )
     parser.add_argument(
         "--no-filter",
@@ -347,6 +374,14 @@ Examples:
         print("rsync is preinstalled on macOS and most Linux distros.", file=sys.stderr)
         sys.exit(1)
 
+    # WebP conversion is load-bearing — the deployed gallery references `.webp`
+    # (web/src/lib/utils/spriteUrl.ts), so we must NOT fall back to shipping PNGs.
+    if shutil.which("cwebp") is None:
+        print("ERROR: cwebp not found on PATH.", file=sys.stderr)
+        print("The deployed gallery serves WebP; cwebp is required.", file=sys.stderr)
+        print("Install with: brew install webp (macOS)", file=sys.stderr)
+        sys.exit(1)
+
     pre_size = _dir_size_bytes(args.output)
     pre_count = _file_count(args.output)
     print(f"Source: {args.output}  ({pre_count:,} files, {_format_bytes(pre_size)})")
@@ -376,27 +411,22 @@ Examples:
                     f"({_format_bytes(excluded_bytes)}): {', '.join(excludes)}"
                 )
 
-        if not args.no_optimize:
-            if shutil.which("oxipng") is None:
-                print(
-                    "  oxipng not found — skipping compression. "
-                    "Install with: brew install oxipng (macOS)"
-                )
-            else:
-                try:
-                    before, after = _run_oxipng(staging / "sprites", verbose=True)
-                    saved = before - after
-                    pct = (saved / before * 100.0) if before else 0.0
-                    print(
-                        f"  oxipng saved {_format_bytes(saved)} "
-                        f"({pct:.1f}% across {staging / 'sprites'})"
-                    )
-                except subprocess.CalledProcessError as e:
-                    print(
-                        f"  WARNING: oxipng failed (exit {e.returncode}); "
-                        "continuing with uncompressed PNGs",
-                        file=sys.stderr,
-                    )
+        try:
+            before, after = _convert_to_webp(staging / "sprites", verbose=True)
+            saved = before - after
+            pct = (saved / before * 100.0) if before else 0.0
+            print(
+                f"  WebP conversion saved {_format_bytes(saved)} "
+                f"({pct:.1f}% across {staging / 'sprites'})"
+            )
+        except subprocess.CalledProcessError as e:
+            # Conversion is required — a partial WebP/PNG mix would mismatch the
+            # manifest. Abort rather than deploy a broken gallery.
+            print(
+                f"ERROR: cwebp failed (exit {e.returncode}); aborting deploy.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
         final_size = _dir_size_bytes(staging)
         final_count = _file_count(staging)

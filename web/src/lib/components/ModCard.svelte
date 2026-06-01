@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ModEntry, Sprite } from '$lib/types';
+	import { spriteSrc } from '$lib/utils/spriteUrl';
 
 	interface Props {
 		mod: ModEntry;
@@ -17,7 +18,7 @@
 	<div style="margin-bottom: 0.75rem; aspect-ratio: 1; width: 100%; display: flex; align-items: center; justify-content: center; border-radius: 0.5rem; background-color: var(--color-surface-elevated); padding: 1.5rem;">
 		{#if representativeSprite}
 			<img
-				src={representativeSprite.path}
+				src={spriteSrc(representativeSprite)}
 				alt={mod.displayName}
 				loading="lazy"
 				decoding="async"

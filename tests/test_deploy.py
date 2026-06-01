@@ -13,11 +13,19 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
-from pinacotheca.cli import _stage_with_filter
+from pinacotheca.cli import _convert_to_webp, _stage_with_filter
 from pinacotheca.gallery_filter import GALLERY_EXCLUDE_GLOBS, write_filter_sidecar
 
 pytestmark = pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync not on PATH")
+
+needs_cwebp = pytest.mark.skipif(shutil.which("cwebp") is None, reason="cwebp not on PATH")
+
+
+def _write_png(path: Path, color: tuple[int, int, int, int] = (200, 120, 60, 255)) -> None:
+    """Write a small real RGBA PNG (cwebp needs a decodable image)."""
+    Image.new("RGBA", (16, 16), color).save(path)
 
 
 @pytest.fixture
@@ -29,18 +37,10 @@ def fixture_extracted(tmp_path: Path) -> Iterator[Path]:
     (sprites / "improvements").mkdir(parents=True)
     (sprites / "portraits").mkdir(parents=True)
 
-    (sprites / "improvements" / "IMPROVEMENT_3D_LIBRARY.png").write_bytes(
-        b"\x89PNG\r\n\x1a\n" + b"a" * 100
-    )
-    (sprites / "improvements" / "IMPROVEMENT_3D_LIBRARY_GREECE_URBAN.png").write_bytes(
-        b"\x89PNG\r\n\x1a\n" + b"b" * 100
-    )
-    (sprites / "improvements" / "IMPROVEMENT_3D_FORUM_ROME_URBAN.png").write_bytes(
-        b"\x89PNG\r\n\x1a\n" + b"c" * 100
-    )
-    (sprites / "portraits" / "ROME_LEADER_MALE_01.png").write_bytes(
-        b"\x89PNG\r\n\x1a\n" + b"d" * 50
-    )
+    _write_png(sprites / "improvements" / "IMPROVEMENT_3D_LIBRARY.png")
+    _write_png(sprites / "improvements" / "IMPROVEMENT_3D_LIBRARY_GREECE_URBAN.png")
+    _write_png(sprites / "improvements" / "IMPROVEMENT_3D_FORUM_ROME_URBAN.png")
+    _write_png(sprites / "portraits" / "ROME_LEADER_MALE_01.png")
 
     (root / "index.html").write_text("<html></html>")
     write_filter_sidecar(root)
@@ -87,9 +87,25 @@ class TestStageWithFilter:
         assert "sprites/improvements/IMPROVEMENT_3D_LIBRARY_GREECE_URBAN.png" in staged_files
 
 
+class TestConvertToWebp:
+    @needs_cwebp
+    def test_converts_and_removes_png(self, tmp_path: Path) -> None:
+        sprites = tmp_path / "sprites" / "improvements"
+        sprites.mkdir(parents=True)
+        _write_png(sprites / "A.png")
+        _write_png(sprites / "B.png")
+
+        before, after = _convert_to_webp(tmp_path / "sprites", verbose=False)
+
+        remaining = {p.name for p in (tmp_path / "sprites").rglob("*") if p.is_file()}
+        assert remaining == {"A.webp", "B.webp"}
+        assert before > 0 and after > 0
+
+
+@needs_cwebp
 class TestDeployDryRun:
     """End-to-end through deploy() with --dry-run. Skips ghp-import entirely
-    since --dry-run returns before it runs."""
+    since --dry-run returns before it runs. cwebp conversion runs for real."""
 
     def _run_deploy(self, output_dir: Path, *extra_args: str) -> int:
         from pinacotheca.cli import deploy
@@ -100,7 +116,6 @@ class TestDeployDryRun:
             "-o",
             str(output_dir),
             "--dry-run",
-            "--no-optimize",  # skip oxipng for speed; tested separately
             *extra_args,
         ]
         try:
@@ -118,7 +133,10 @@ class TestDeployDryRun:
         assert rc == 0
         out = capsys.readouterr().out
         assert "Filter excluded" in out
+        assert "WebP conversion saved" in out
         assert "Dry run" in out
+        # The staged tree (and dry-run sample listing) is WebP, not PNG.
+        assert ".webp" in out
 
     def test_missing_sidecar_fails_loud(
         self, fixture_extracted: Path, capsys: pytest.CaptureFixture[str]

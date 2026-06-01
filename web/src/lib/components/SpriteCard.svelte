@@ -2,6 +2,7 @@
 	import type { Sprite } from '$lib/types';
 	import { getCategoryInfo } from '$lib/utils/categories';
 	import { humanizeName } from '$lib/utils/humanize';
+	import { spriteSrc } from '$lib/utils/spriteUrl';
 
 	interface Props {
 		sprite: Sprite;
@@ -27,7 +28,7 @@
 >
 	<div style="margin-bottom: 0.75rem; aspect-ratio: 1; width: 100%; display: flex; align-items: center; justify-content: center; border-radius: 0.5rem; background-color: var(--color-surface-elevated); padding: 1.5rem;">
 		<img
-			src={sprite.path}
+			src={spriteSrc(sprite)}
 			alt={sprite.name}
 			loading="lazy"
 			decoding="async"

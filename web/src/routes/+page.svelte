@@ -8,6 +8,7 @@
 	import ResultsView from '$lib/components/ResultsView.svelte';
 	import { getCategoryInfo } from '$lib/utils/categories';
 	import { humanizeName } from '$lib/utils/humanize';
+	import { spriteSrc, SPRITE_EXT } from '$lib/utils/spriteUrl';
 	import type { Sprite, FilterState } from '$lib/types';
 	import manifest from '$lib/../../src/data/manifest.json';
 
@@ -213,8 +214,8 @@
 	function downloadSprite() {
 		if (!lightboxSprite) return;
 		const link = document.createElement('a');
-		link.href = lightboxSprite.path;
-		link.download = `${lightboxSprite.name}.png`;
+		link.href = spriteSrc(lightboxSprite);
+		link.download = `${lightboxSprite.name}.${SPRITE_EXT}`;
 		link.click();
 	}
 
@@ -335,7 +336,7 @@
 			role="presentation"
 		>
 			<img
-				src={lightboxSprite.path}
+				src={spriteSrc(lightboxSprite)}
 				alt={lightboxSprite.name}
 				class="sprite-image max-h-[70vh] max-w-[90vw] object-contain"
 			/>
