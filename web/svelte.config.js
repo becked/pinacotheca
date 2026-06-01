@@ -13,6 +13,16 @@ const config = {
 			precompress: false,
 			strict: true
 		}),
+		prerender: {
+			handleHttpError: ({ path, message }) => {
+				// Sprite images are PNG in the local tree; the production bundle
+				// references the .webp variants that only exist after
+				// pinacotheca-deploy converts them. The prerender crawl can't find
+				// them in ../extracted/ — that's expected, don't fail the build.
+				if (path.includes('/sprites/')) return;
+				throw new Error(message);
+			}
+		},
 		paths: {
 			base: process.env.NODE_ENV === 'production' ? '/pinacotheca' : ''
 		},
