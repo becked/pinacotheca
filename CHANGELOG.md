@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-05-31
+
+### Changed
+- Deployed gallery now ships as WebP q90 instead of oxipng-optimized PNG.
+  Conversion happens at deploy time on the staged copy; the local
+  `extracted/` tree stays PNG so per-ankh and the dev server are
+  unaffected. WebP q90 is visually lossless on these renders (PSNR
+  40–44 dB, SSIM > 0.999) at ~18% of the PNG size, dropping the gh-pages
+  deploy from ~957 MB (93.5% of the 1 GB cap) to ~204 MB (20%).
+- `cli.py`: `_convert_to_webp()` replaces `_run_oxipng()`; `cwebp` is now
+  a required dependency (the deploy aborts if it's missing) since the
+  gallery references `.webp` and a PNG/WebP mismatch would break it.
+  Dropped the `--no-optimize` flag.
+- Web gallery picks the image extension at runtime via a new
+  `spriteSrc()`/`SPRITE_EXT` helper: `.png` in the dev server (`dev=true`),
+  `.webp` in the production build. Wired into all `<img>` consumers and
+  the download button; `manifest.json` still stores `.png` paths.
+
+### Fixed
+- Prerender crawl tolerates missing WebP sprites. The production bundle
+  references `.webp` URLs but the local tree is PNG (WebP only exists
+  after the deploy conversion step), so SvelteKit's crawler hit 404s and
+  aborted the build; 404s under `/sprites/` are now ignored while real
+  route/asset errors still fail.
+
 ## [2.6.1] - 2026-05-26
 
 ### Fixed
