@@ -584,11 +584,12 @@ SUPPLEMENTAL_PREFABS: list[tuple[str, str]] = [
 # try/except, so the blacklist is checked BEFORE any prefab-walking.
 # A more principled fix is subprocess-per-asset isolation; deferred until
 # the list grows past a handful of entries.
-PREFAB_DECODE_BLACKLIST: frozenset[str] = frozenset(
-    {
-        "Fort",  # Material.001_Diff crashes Texture2D.image
-    }
-)
+#
+# Currently empty: the lone entry "Fort" (its Material.001_Diff is a
+# DXT1Crunched texture that SIGBUS'd texture2ddecoder's crunch unpacker) was
+# removed once texture2ddecoder>=1.0.6 fixed the crunch-decode crash. The pin
+# in pyproject.toml guards against regressing to a crashing version.
+PREFAB_DECODE_BLACKLIST: frozenset[str] = frozenset()
 
 # Generic improvements that should layer ground (TERRAIN_TEMPERATE biome hex
 # + their own PVT splat paint) underneath the buildings, like capitals + urban
