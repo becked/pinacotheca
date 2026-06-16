@@ -39,6 +39,7 @@ export interface FilterState {
 	query: string;
 	category: string | null;
 	mod: string | null;
+	includeMods: boolean;
 	minWidth: number | null;
 	maxWidth: number | null;
 	minHeight: number | null;
@@ -50,6 +51,7 @@ export const DEFAULT_FILTER_STATE: FilterState = {
 	query: '',
 	category: null,
 	mod: null,
+	includeMods: false,
 	minWidth: null,
 	maxWidth: null,
 	minHeight: null,

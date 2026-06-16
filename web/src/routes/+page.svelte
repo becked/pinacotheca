@@ -33,6 +33,7 @@
 		query: '',
 		category: null,
 		mod: null,
+		includeMods: false,
 		minWidth: null,
 		maxWidth: null,
 		minHeight: null,
@@ -54,6 +55,7 @@
 		filters.query = url.searchParams.get('q') ?? '';
 		filters.category = url.searchParams.get('cat');
 		filters.mod = url.searchParams.get('mod');
+		filters.includeMods = url.searchParams.get('mods') === '1';
 		filters.minWidth = url.searchParams.has('minW') ? Number(url.searchParams.get('minW')) : null;
 		filters.maxWidth = url.searchParams.has('maxW') ? Number(url.searchParams.get('maxW')) : null;
 		filters.minHeight = url.searchParams.has('minH') ? Number(url.searchParams.get('minH')) : null;
@@ -80,6 +82,7 @@
 		if (filters.query) params.set('q', filters.query);
 		if (filters.category) params.set('cat', filters.category);
 		if (filters.mod) params.set('mod', filters.mod);
+		if (filters.includeMods) params.set('mods', '1');
 		if (filters.minWidth) params.set('minW', String(filters.minWidth));
 		if (filters.maxWidth) params.set('maxW', String(filters.maxWidth));
 		if (filters.minHeight) params.set('minH', String(filters.minHeight));
@@ -98,7 +101,8 @@
 		// Choose the starting pool:
 		//   - Mod filter active → only that mod's sprites
 		//   - mod:<slug> category active → only that mod-category's sprites
-		//   - Search query active → everything, so mod content is discoverable via search
+		//   - Search query active → base-game only by default; mod content is
+		//     folded in only when "Include mods" is toggled on.
 		//   - Otherwise (plain category browse, no search) → base-game only;
 		//     mod content stays scoped to the dedicated Mods section.
 		if (filters.mod) {
@@ -106,7 +110,9 @@
 		} else if (filters.category && filters.category.startsWith('mod:')) {
 			result = searchableSprites.filter((s) => s.category === filters.category);
 		} else if (filters.query) {
-			result = searchableSprites;
+			result = filters.includeMods
+				? searchableSprites
+				: searchableSprites.filter((s) => !s.modSlug);
 		} else {
 			result = searchableSprites.filter((s) => !s.modSlug);
 		}
@@ -201,6 +207,11 @@
 		updateUrl();
 	}
 
+	function handleIncludeModsChange(value: boolean) {
+		filters.includeMods = value;
+		updateUrl(true); // Replace for filter tweaks
+	}
+
 	function handleSpriteClick(sprite: Sprite) {
 		lightboxSprite = sprite;
 		updateUrl(); // Push for navigation
@@ -243,6 +254,7 @@
 		filters.query = '';
 		filters.category = null;
 		filters.mod = null;
+		filters.includeMods = false;
 		filters.minWidth = null;
 		filters.maxWidth = null;
 		filters.minHeight = null;
@@ -291,6 +303,7 @@
 			onSearch={handleSearch}
 			onCategoryChange={handleCategorySelect}
 			onModChange={handleModSelect}
+			onIncludeModsChange={handleIncludeModsChange}
 			onClearAll={clearAllFilters}
 			onSpriteClick={handleSpriteClick}
 		/>
@@ -300,7 +313,9 @@
 			mods={manifest.mods}
 			sprites={manifest.sprites as Sprite[]}
 			searchQuery={filters.query}
+			includeMods={filters.includeMods}
 			onSearch={handleSearch}
+			onIncludeModsChange={handleIncludeModsChange}
 			onCategorySelect={(cat) => handleCategorySelect(cat)}
 			onModSelect={(slug) => handleModSelect(slug)}
 		/>

@@ -9,12 +9,24 @@
 		mods: ModEntry[];
 		sprites: Sprite[];
 		searchQuery: string;
+		includeMods: boolean;
 		onSearch: (query: string) => void;
+		onIncludeModsChange: (value: boolean) => void;
 		onCategorySelect: (category: string) => void;
 		onModSelect: (slug: string) => void;
 	}
 
-	let { categories, mods, sprites, searchQuery, onSearch, onCategorySelect, onModSelect }: Props = $props();
+	let {
+		categories,
+		mods,
+		sprites,
+		searchQuery,
+		includeMods,
+		onSearch,
+		onIncludeModsChange,
+		onCategorySelect,
+		onModSelect
+	}: Props = $props();
 
 	let categoryRepresentatives = $derived.by(() => {
 		const reps: Record<string, Sprite | undefined> = {};
@@ -106,6 +118,17 @@
 				</button>
 			{/if}
 		</div>
+		<label
+			style="display: flex; justify-content: flex-end; align-items: center; gap: 0.4rem; margin-top: 0.75rem; color: var(--color-muted); font-size: 0.875rem; cursor: pointer; user-select: none;"
+		>
+			<input
+				type="checkbox"
+				class="mods-checkbox"
+				checked={includeMods}
+				onchange={(e) => onIncludeModsChange((e.target as HTMLInputElement).checked)}
+			/>
+			Include mods in search
+		</label>
 	</div>
 </section>
 
@@ -156,5 +179,30 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 		gap: 1.5rem;
+	}
+	.mods-checkbox {
+		appearance: none;
+		-webkit-appearance: none;
+		width: 1.05rem;
+		height: 1.05rem;
+		margin: 0;
+		border: 1px solid var(--color-border);
+		border-radius: 0.25rem;
+		background-color: var(--color-background);
+		cursor: pointer;
+		display: inline-grid;
+		place-content: center;
+	}
+	.mods-checkbox::before {
+		content: '';
+		width: 0.55rem;
+		height: 0.55rem;
+		transform: scale(0);
+		transition: transform 0.1s ease-in-out;
+		background-color: var(--color-primary);
+		clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+	}
+	.mods-checkbox:checked::before {
+		transform: scale(1);
 	}
 </style>

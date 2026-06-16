@@ -12,6 +12,7 @@
 		onSearch: (query: string) => void;
 		onCategoryChange: (category: string | null) => void;
 		onModChange: (slug: string | null) => void;
+		onIncludeModsChange: (value: boolean) => void;
 		onClearAll: () => void;
 		onSpriteClick: (sprite: Sprite) => void;
 	}
@@ -24,6 +25,7 @@
 		onSearch,
 		onCategoryChange,
 		onModChange,
+		onIncludeModsChange,
 		onClearAll,
 		onSpriteClick
 	}: Props = $props();
@@ -137,6 +139,19 @@
 				{/each}
 			</select>
 		{/if}
+		{#if filters.query && !activeMod}
+			<label
+				style="display: flex; align-items: center; gap: 0.4rem; color: var(--color-muted); font-size: 0.875rem; cursor: pointer; user-select: none;"
+			>
+				<input
+					type="checkbox"
+					class="mods-checkbox"
+					checked={filters.includeMods}
+					onchange={(e) => onIncludeModsChange((e.target as HTMLInputElement).checked)}
+				/>
+				Include mods
+			</label>
+		{/if}
 		<span style="color: var(--color-muted); margin-left: auto; font-size: 0.875rem;">{resultSummary}</span>
 	</div>
 </section>
@@ -189,5 +204,30 @@
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
 		gap: 1.5rem;
+	}
+	.mods-checkbox {
+		appearance: none;
+		-webkit-appearance: none;
+		width: 1.05rem;
+		height: 1.05rem;
+		margin: 0;
+		border: 1px solid var(--color-border);
+		border-radius: 0.25rem;
+		background-color: var(--color-background);
+		cursor: pointer;
+		display: inline-grid;
+		place-content: center;
+	}
+	.mods-checkbox::before {
+		content: '';
+		width: 0.55rem;
+		height: 0.55rem;
+		transform: scale(0);
+		transition: transform 0.1s ease-in-out;
+		background-color: var(--color-primary);
+		clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+	}
+	.mods-checkbox:checked::before {
+		transform: scale(1);
 	}
 </style>
