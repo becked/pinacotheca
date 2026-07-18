@@ -96,6 +96,36 @@ def load_exclusion_pattern() -> re.Pattern[str] | None:
     return re.compile(combined, re.IGNORECASE)
 
 
+# Role suffix for the smaller variant(s) of a co-named sprite. The game ships
+# some assets twice under one name — a full-art version (~128px) plus a small
+# UI variant (a unit's flag glyph, a crest's list icon, ~33-58px). A double
+# underscore is deliberate: real sprite names end in `_ICON` (e.g. PLAYER_ICON,
+# TECH_PREREQUISITE_ICON) but none contain `__`, so `{name}__ICON` can never
+# collide with a genuine sprite name.
+ICON_SUFFIX = "__ICON"
+
+
+def variant_output_names(name: str, count: int) -> list[str]:
+    """Deterministic output filenames for a sprite that ships ``count``
+    co-named variants, ordered largest-first (primary first).
+
+    The largest variant keeps the bare ``{name}.png``; every smaller variant
+    takes the :data:`ICON_SUFFIX` role suffix, with an ordinal appended past
+    the first so nothing collides when a name has more than two variants.
+
+        1 variant  -> ["FOO.png"]
+        2 variants -> ["FOO.png", "FOO__ICON.png"]
+        3 variants -> ["FOO.png", "FOO__ICON.png", "FOO__ICON_2.png"]
+    """
+    if count < 1:
+        return []
+    names = [f"{name}.png"]
+    for k in range(1, count):
+        suffix = ICON_SUFFIX if k == 1 else f"{ICON_SUFFIX}_{k}"
+        names.append(f"{name}{suffix}.png")
+    return names
+
+
 if TYPE_CHECKING:
     from UnityPy import Environment
 
@@ -209,46 +239,73 @@ def extract_sprites(
             print(f"Found {total:,} sprites\n")
             print("Extracting sprites...")
 
-        counts: dict[str, int] = dict.fromkeys(CATEGORIES, 0)
         errors = 0
 
-        for i, obj in enumerate(sprites):
+        # ---- Phase 1: group Sprite objects by name --------------------------
+        # Co-named variants (a unit's 128px portrait + its ~58px flag glyph, a
+        # crest's full art + its small list icon) previously raced through a
+        # first-write-wins loop that kept whichever object the file's object
+        # table happened to yield first and silently dropped the rest — both
+        # nondeterministic and lossy. Grouping lets us keep every variant with
+        # a stable primary/icon assignment.
+        groups: dict[str, list[Any]] = {}
+        for obj in sprites:
             try:
-                data = obj.read()
-                name = getattr(data, "m_Name", "")
-
-                if name:
-                    # Skip excluded patterns
-                    if exclude_pattern and exclude_pattern.search(name):
-                        excluded_count += 1
-                        del data
-                        continue
-
-                    img = data.image
-                    if img:
-                        cat = categorize(name)
-
-                        # Large uncategorized images are backgrounds
-                        if cat == "other" and img.width >= 1024:
-                            cat = "backgrounds"
-
-                        out_path = sprites_dir / cat / f"{name}.png"
-
-                        if not out_path.exists():
-                            img.save(out_path)
-                            counts[cat] += 1
-
-                        del img
-                del data
-
+                name = getattr(obj.read(), "m_Name", "")
             except Exception:
                 errors += 1
+                continue
+            if not name:
+                continue
+            if exclude_pattern and exclude_pattern.search(name):
+                excluded_count += 1
+                continue
+            groups.setdefault(name, []).append(obj)
+
+        # ---- Phase 2: decode + emit each name's variants --------------------
+        counts: dict[str, int] = dict.fromkeys(CATEGORIES, 0)
+
+        for gi, (name, objs) in enumerate(groups.items()):
+            # Decode every variant, tagging each with a fully deterministic sort
+            # key (largest area first; width/height then the stable path_id
+            # break ties) so the same input always yields the same primary.
+            variants: list[tuple[tuple[int, int, int, int], Any]] = []
+            for obj in objs:
+                try:
+                    img = obj.read().image
+                except Exception:
+                    errors += 1
+                    continue
+                if img is None:
+                    continue
+                w, h = img.width, img.height
+                variants.append(((-(w * h), -w, -h, obj.path_id), img))
+            if not variants:
+                continue
+            variants.sort(key=lambda t: t[0])
+            imgs = [img for _, img in variants]
+
+            # Decide the category once per name from the primary (largest)
+            # variant so every variant of a name lands in the same folder.
+            cat = categorize(name)
+            if cat == "other" and imgs[0].width >= 1024:
+                cat = "backgrounds"
+
+            # Overwrite unconditionally (no existence check): grouping already
+            # guarantees each output path is written once per run, and writing
+            # the deterministic primary heals any wrong variant a prior
+            # first-write-wins run may have left at `{name}.png`.
+            for img, fname in zip(imgs, variant_output_names(name, len(imgs)), strict=True):
+                img.save(sprites_dir / cat / fname)
+                counts[cat] += 1
+                del img
+            del variants, imgs
 
             # Progress and memory management
-            if verbose and (i + 1) % 500 == 0:
+            if verbose and (gi + 1) % 500 == 0:
                 gc.collect()
                 extracted = sum(counts.values())
-                print(f"  Progress: {i + 1:,}/{total:,} | Extracted: {extracted:,}")
+                print(f"  Progress: {gi + 1:,}/{len(groups):,} names | Extracted: {extracted:,}")
 
         # Summary
         total_extracted = sum(counts.values())
