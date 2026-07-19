@@ -263,6 +263,28 @@ def _convert_to_webp(directory: Path, *, verbose: bool = True) -> tuple[int, int
     return before, after
 
 
+def _read_project_version() -> str:
+    """Return the package version from ``pyproject.toml`` (the source of truth).
+
+    The deploy command always runs from a source checkout, and
+    ``scripts/bump-version.py`` writes the new version to ``pyproject.toml`` at
+    bump time. Reading it directly keeps the deploy commit message correct even
+    when the editable install's metadata is stale (a bump doesn't reinstall, so
+    ``importlib.metadata.version`` can lag behind). Falls back to the installed
+    metadata if ``pyproject.toml`` can't be read next to the source tree.
+    """
+    pyproject = Path(__file__).parent.parent.parent / "pyproject.toml"
+    try:
+        import tomllib
+
+        with pyproject.open("rb") as fh:
+            return str(tomllib.load(fh)["project"]["version"])
+    except (OSError, KeyError, ImportError):
+        from importlib.metadata import version
+
+        return version("pinacotheca")
+
+
 def deploy() -> None:
     """Deploy gallery to GitHub Pages using ghp-import.
 
@@ -300,9 +322,7 @@ Examples:
         default=Path.cwd() / "extracted",
         help="Directory to deploy (default: ./extracted)",
     )
-    from importlib.metadata import version
-
-    default_message = f"Deploy gallery v{version('pinacotheca')}"
+    default_message = f"Deploy gallery v{_read_project_version()}"
     parser.add_argument(
         "-m",
         "--message",
